@@ -5,7 +5,7 @@ from chemFilters.chem.standardizers import ChemStandardizer
 from ..core.fp_utils import calculate_mixed_FPs
 from ..core.smiles_utils import clean_mixtures
 from ..core.stats_make import repeated_indices_from_array_series
-from .core import get_multiple_compounds
+from .core import get_compound_synonyms, get_multiple_compounds
 
 
 def get_and_curate_multiple_compounds_result(
@@ -14,6 +14,7 @@ def get_and_curate_multiple_compounds_result(
     chirality: bool = True,
     n_jobs: int = 1,
     n_threads: int = 4,
+    fetch_synonyms: bool = True,
 ) -> pd.DataFrame:
     """
     Fetch a list of inputs from PubChem, treating them as the input type specified.
@@ -32,10 +33,13 @@ def get_and_curate_multiple_compounds_result(
     - pubchem_cid -> the PubChem CID of the compound
     - inchi -> the InChI of the compound
     - inchikey -> the InChIKey of the compound
-    - isomeric_smiles -> the isomeric SMILES of the compound
-    - canonical_smiles -> the canonical SMILES of the compound
+    - isomeric_smiles -> the isomeric SMILES of the compound, i.e. pubchempy's `smiles`
+    - canonical_smiles -> the connectivity-only SMILES, i.e. pubchempy's `connectivity_smiles`
     - iupac_name -> the IUPAC name of the compound
     - synonyms -> the synonyms of the compound
+
+    The two SMILES columns keep the names pubchempy used before 1.0.5, which are also the
+    names the ChEMBL side of Capricho uses, so the columns stay consistent across sources.
 
     Usage:
     >>> from CompoundMapper.pubchem.api import get_and_curate_multiple_compounds_result
@@ -48,6 +52,9 @@ def get_and_curate_multiple_compounds_result(
         chirality: Use chirality to identify if compounds are the same with fingerprints
         n_jobs: Number of parallel jobs for calculating fingerprints. 1 is advised. Defaults to 1.
         n_threads: Number of parallel threads for fetching compounds. 4 is advised. Defaults to 4.
+        fetch_synonyms: Fetch each compound's synonyms, which costs one extra PubChem
+            request per compound. False leaves the column empty and roughly halves the
+            time the query takes. Defaults to True.
 
     Returns:
         df: DataFrame with curated results
@@ -80,14 +87,15 @@ def get_and_curate_multiple_compounds_result(
         to_curate = [
             {
                 input_type: inp,
-                "smiles": (r.isomeric_smiles if chirality else r.canonical_smiles),
+                "smiles": (r.smiles if chirality else r.connectivity_smiles),
                 "pubchem_cid": r.cid,
                 "inchi": r.inchi,
                 "inchikey": r.inchikey,
-                "isomeric_smiles": r.isomeric_smiles,
-                "canonical_smiles": r.canonical_smiles,
+                # pubchempy renamed these in 1.0.5; the column names are kept as they were
+                "isomeric_smiles": r.smiles,
+                "canonical_smiles": r.connectivity_smiles,
                 "iupac_name": r.iupac_name,
-                "synonyms": r.synonyms,
+                "synonyms": get_compound_synonyms(r) if fetch_synonyms else np.nan,
             }
             for r in res
         ]

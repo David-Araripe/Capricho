@@ -38,7 +38,8 @@ dependencies = [
   ]
 
 [project.optional-dependencies]
-dev = ["ruff", "isort", "black", "pytest"]
+pubchem = ["pubchempy>=1.0.5"]  # 1.0.5 renamed the Compound SMILES properties
+dev = ["ruff", "isort", "black", "pytest", "pubchempy>=1.0.5"]
 docs = [
   "sphinx>=7.0",
   "furo",
