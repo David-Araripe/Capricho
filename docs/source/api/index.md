@@ -57,6 +57,19 @@ Functions that flag (rather than remove) problematic data entries.
    :show-inheritance:
 ```
 
+## Structure Search
+
+Find compounds in ChEMBL starting from a SMILES string, either by structure identity or by
+fingerprint similarity across the whole database. Similarity search requires the optional
+`similarity` extra (see [Installation](../installation.md)).
+
+```{eval-rst}
+.. automodule:: Capricho.chembl.similarity
+   :members: search_by_structure, search_by_similarity, get_and_curate_chembl_compounds
+   :undoc-members:
+   :show-inheritance:
+```
+
 ## Analysis Tools
 
 Tools for data quality analysis and comparability studies.
@@ -112,6 +125,15 @@ Tools for data quality analysis and comparability studies.
 
 ```{eval-rst}
 .. automodule:: Capricho.chembl.api.webresource
+   :members:
+   :undoc-members:
+   :show-inheritance:
+```
+
+### Fingerprint Index
+
+```{eval-rst}
+.. automodule:: Capricho.chembl.api.fingerprint_index
    :members:
    :undoc-members:
    :show-inheritance:

@@ -1,6 +1,7 @@
 """Module holding functionalities for the ChEMBL API using chembl downloader as the backend."""
 
 import json
+import re
 from pathlib import Path
 from textwrap import dedent
 from typing import List, Optional, Sequence, Tuple, Union
@@ -233,6 +234,129 @@ def get_compound_table_sql(
         lambda x: molecule_chembl_ids.index(x) if x in molecule_chembl_ids else len(molecule_chembl_ids)
     )
     result = result.sort_values("idx").drop("idx", axis=1)
+
+    return result
+
+
+_COMPOUND_LOOKUP_QUERY = dedent("""\
+    SELECT
+        md.chembl_id AS molecule_chembl_id,
+        cs.molregno,
+        cs.canonical_smiles,
+        cs.standard_inchi_key,
+        pmd.chembl_id AS parent_chembl_id,
+        pcs.canonical_smiles AS parent_smiles
+    FROM compound_structures cs
+    JOIN molecule_dictionary md ON cs.molregno = md.molregno
+    LEFT JOIN molecule_hierarchy mh ON cs.molregno = mh.molregno
+    LEFT JOIN molecule_dictionary pmd ON mh.parent_molregno = pmd.molregno
+    LEFT JOIN compound_structures pcs ON mh.parent_molregno = pcs.molregno
+    WHERE
+        {where_clause}
+    """)
+
+CONNECTIVITY_PATTERN = re.compile(r"^[A-Z]{14}$")
+
+
+def get_compounds_by_inchikey_sql(
+    inchi_keys: Optional[List[str]] = None,
+    connectivities: Optional[List[str]] = None,
+    prefix: Optional[Sequence[str]] = None,
+    version: Optional[Union[int, str]] = None,
+) -> pd.DataFrame:
+    """Look up compounds by full standard InChI key and/or by connectivity.
+
+    A full InChI key identifies a single structure including stereochemistry and protonation
+    state. A connectivity, the first 14 characters of the key, identifies the molecular skeleton
+    and therefore also matches stereoisomers and salt forms of the same compound. Both are
+    resolved against the indexed ``standard_inchi_key`` column, so lookups stay in the
+    millisecond range even though ``compound_structures`` holds ~2.9M rows.
+
+    Args:
+        inchi_keys: list of full standard InChI keys to match exactly. Defaults to None.
+        connectivities: list of 14-character connectivities to match as key prefixes.
+            Defaults to None.
+        prefix: Optional prefix for an alternative data directory.
+        version: Optional ChEMBL version to use.
+
+    Returns:
+        pd.DataFrame: molecule_chembl_id, molregno, canonical_smiles, standard_inchi_key and the
+        parent compound from ``molecule_hierarchy``. Empty if nothing matched.
+    """
+    if not inchi_keys and not connectivities:
+        raise ValueError("Provide at least one of 'inchi_keys' or 'connectivities'.")
+
+    where_clauses = []
+    if inchi_keys:
+        key_placeholders = ", ".join([f"'{key}'" for key in sorted(set(inchi_keys))])
+        where_clauses.append(f"cs.standard_inchi_key IN ({key_placeholders})")
+
+    for connectivity in sorted(set(connectivities or [])):
+        if not CONNECTIVITY_PATTERN.match(connectivity):
+            raise ValueError(
+                f"Invalid connectivity {connectivity!r}: expected 14 uppercase letters, "
+                "i.e. the first block of a standard InChI key."
+            )
+        # GLOB with a trailing wildcard is rewritten by SQLite into a range scan on
+        # idx_cmpdstr_stdkey, unlike substr(), which would force a full table scan.
+        where_clauses.append(f"cs.standard_inchi_key GLOB '{connectivity}*'")
+
+    downloader_configs = check_and_download_chembl_db(prefix=prefix, version=version)
+
+    query_str = _COMPOUND_LOOKUP_QUERY.format(where_clause=" OR\n        ".join(where_clauses))
+    logger.debug(f"Generated SQL query for compound lookup:\n{query_str}")
+
+    result = query(
+        query_str,
+        version=downloader_configs["version"],
+        prefix=downloader_configs["prefix"],
+    )
+
+    if result.empty:
+        logger.warning(
+            f"No compounds found for {len(inchi_keys or [])} InChI key(s) and "
+            f"{len(connectivities or [])} connectivity value(s)."
+        )
+
+    return result
+
+
+def get_compounds_by_molregno_sql(
+    molregnos: Sequence[int],
+    prefix: Optional[Sequence[str]] = None,
+    version: Optional[Union[int, str]] = None,
+) -> pd.DataFrame:
+    """Look up compounds by molregno, the internal ChEMBL identifier.
+
+    Used to resolve fingerprint search hits, since the ChEMBL fingerprint index is keyed by
+    molregno rather than by ChEMBL ID.
+
+    Args:
+        molregnos: molregno values to look up.
+        prefix: Optional prefix for an alternative data directory.
+        version: Optional ChEMBL version to use.
+
+    Returns:
+        pd.DataFrame: molecule_chembl_id, molregno, canonical_smiles, standard_inchi_key and the
+        parent compound from ``molecule_hierarchy``. Empty if nothing matched.
+    """
+    if len(molregnos) == 0:
+        raise ValueError("No molregnos provided")
+
+    downloader_configs = check_and_download_chembl_db(prefix=prefix, version=version)
+
+    placeholders = ", ".join([str(int(molregno)) for molregno in sorted(set(molregnos))])
+    query_str = _COMPOUND_LOOKUP_QUERY.format(where_clause=f"cs.molregno IN ({placeholders})")
+    logger.debug(f"Generated SQL query for molregno lookup:\n{query_str}")
+
+    result = query(
+        query_str,
+        version=downloader_configs["version"],
+        prefix=downloader_configs["prefix"],
+    )
+
+    if result.empty:
+        logger.warning(f"No compounds found for {len(molregnos)} molregno value(s).")
 
     return result
 

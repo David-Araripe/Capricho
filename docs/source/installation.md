@@ -16,6 +16,22 @@ Or using uv (faster):
 uv pip install capricho
 ```
 
+## Similarity Search (Optional)
+
+Searching the whole ChEMBL database by fingerprint similarity relies on
+[FPSim2](https://github.com/chembl/FPSim2), which is not installed by default:
+
+```bash
+pip install "capricho[similarity]"
+```
+
+The extra is optional because FPSim2 ships compiled wheels and pulls in PyTables, which are only
+needed for {func}`Capricho.chembl.similarity.search_by_similarity`. Looking a compound up by
+structure with {func}`Capricho.chembl.similarity.search_by_structure` works without it.
+
+On Python 3.10, pip resolves to FPSim2 0.7.3, the last release supporting that interpreter;
+Python 3.11 and later get the current release.
+
 ## From GitHub (Development Version)
 
 To install the latest development version directly from GitHub:
