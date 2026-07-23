@@ -130,7 +130,7 @@ class TestFingerprintIndexContract(unittest.TestCase):
         cls._tmpdir = tempfile.TemporaryDirectory()
         cls.index_path = str(Path(cls._tmpdir.name) / "test_index.h5")
         # molregno-like integer ids, as used by the index ChEMBL publishes
-        cls.molecules = [
+        molecules = [
             [ASPIRIN, 1],
             ["CC(=O)Oc1ccccc1C(=O)[O-]", 2],
             ["c1ccccc1C(=O)O", 3],
@@ -138,7 +138,7 @@ class TestFingerprintIndexContract(unittest.TestCase):
             ["CCO", 5],
         ]
         create_db_file(
-            mols_source=cls.molecules,
+            mols_source=molecules,
             filename=cls.index_path,
             mol_format="smiles",
             fp_type="Morgan",
@@ -175,28 +175,20 @@ class TestFingerprintIndexContract(unittest.TestCase):
         results = self.engine.top_k(ASPIRIN, k=2, threshold=0.1, n_workers=1)
         self.assertEqual(len(results), 2)
 
-    def test_results_are_ordered_by_descending_similarity(self):
-        coeffs = [float(row["coeff"]) for row in self.engine.similarity(ASPIRIN, threshold=0.1)]
-        self.assertEqual(coeffs, sorted(coeffs, reverse=True))
-
 
 @unittest.skipUnless(HAS_CHEMBL_DB, "No ChEMBL database has been downloaded locally")
 class TestStructureSearchAgainstChembl(unittest.TestCase):
     """End-to-end lookups against a real, locally downloaded ChEMBL database."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.version = LOCAL_CHEMBL_VERSION
-
     def test_aspirin_resolves_to_chembl25(self):
-        hits = search_by_structure(ASPIRIN, version=self.version)
+        hits = search_by_structure(ASPIRIN, version=LOCAL_CHEMBL_VERSION)
         exact = hits[hits["match_type"] == "exact"]
         self.assertEqual(exact["molecule_chembl_id"].tolist(), ["CHEMBL25"])
         self.assertEqual(exact["standard_inchi_key"].tolist(), [ASPIRIN_KEY])
 
     def test_racemate_also_matches_its_enantiomers_by_connectivity(self):
         """Racemic ibuprofen is an exact hit; the single enantiomers match on connectivity."""
-        hits = search_by_structure(IBUPROFEN, version=self.version)
+        hits = search_by_structure(IBUPROFEN, version=LOCAL_CHEMBL_VERSION)
         exact = hits[hits["match_type"] == "exact"]
         connectivity = hits[hits["match_type"] == "connectivity"]
         self.assertEqual(exact["molecule_chembl_id"].tolist(), ["CHEMBL521"])
@@ -206,25 +198,25 @@ class TestStructureSearchAgainstChembl(unittest.TestCase):
         self.assertNotIn(ASPIRIN_KEY, connectivity["standard_inchi_key"].tolist())
 
     def test_unmatched_query_is_reported_rather_than_dropped(self):
-        hits = search_by_structure([ASPIRIN, "this-is-not-a-smiles"], version=self.version)
+        hits = search_by_structure([ASPIRIN, "this-is-not-a-smiles"], version=LOCAL_CHEMBL_VERSION)
         unmatched = hits[hits["match_type"] == "no_match"]
         self.assertEqual(unmatched["query_smiles"].tolist(), ["this-is-not-a-smiles"])
         self.assertTrue(unmatched["molecule_chembl_id"].isna().all())
 
     def test_every_query_appears_in_the_output(self):
         queries = [ASPIRIN, IBUPROFEN, "this-is-not-a-smiles"]
-        hits = search_by_structure(queries, version=self.version)
+        hits = search_by_structure(queries, version=LOCAL_CHEMBL_VERSION)
         self.assertEqual(set(hits["query_smiles"]), set(queries))
 
     def test_hits_report_their_parent_compound(self):
-        hits = search_by_structure(ASPIRIN, version=self.version)
+        hits = search_by_structure(ASPIRIN, version=LOCAL_CHEMBL_VERSION)
         exact = hits[hits["match_type"] == "exact"]
         self.assertEqual(exact["parent_chembl_id"].tolist(), ["CHEMBL25"])
 
     def test_molregno_lookup_round_trips(self):
-        hits = search_by_structure(ASPIRIN, version=self.version)
+        hits = search_by_structure(ASPIRIN, version=LOCAL_CHEMBL_VERSION)
         molregno = int(hits.loc[hits["match_type"] == "exact", "molregno"].iloc[0])
-        compounds = get_compounds_by_molregno_sql([molregno], version=self.version)
+        compounds = get_compounds_by_molregno_sql([molregno], version=LOCAL_CHEMBL_VERSION)
         self.assertEqual(compounds["molecule_chembl_id"].tolist(), ["CHEMBL25"])
 
 
@@ -238,42 +230,47 @@ class TestSimilaritySearchAgainstChembl(unittest.TestCase):
             check_and_download_fingerprint_index,
         )
 
-        cls.version = LOCAL_CHEMBL_VERSION
         try:
-            check_and_download_fingerprint_index(version=cls.version)
+            check_and_download_fingerprint_index(version=LOCAL_CHEMBL_VERSION)
         except Exception as exc:  # network or a release without a published index
             raise unittest.SkipTest(f"Fingerprint index unavailable: {exc}")
 
     def test_query_finds_itself_at_perfect_similarity(self):
-        hits = search_by_similarity(ASPIRIN, threshold=0.9, version=self.version)
+        hits = search_by_similarity(ASPIRIN, threshold=0.9, version=LOCAL_CHEMBL_VERSION)
         perfect = hits[hits["similarity"] == 1.0]["molecule_chembl_id"].tolist()
         self.assertIn("CHEMBL25", perfect)
 
     def test_salt_forms_are_found_even_though_their_connectivity_differs(self):
         """Fingerprints of a salt still contain the parent's bits, unlike its InChI key."""
-        hits = search_by_similarity(ASPIRIN, threshold=0.9, version=self.version)
+        hits = search_by_similarity(ASPIRIN, threshold=0.9, version=LOCAL_CHEMBL_VERSION)
         parents = hits[hits["similarity"] == 1.0]["parent_chembl_id"].tolist()
         self.assertGreater(len(parents), 1)
         self.assertIn("CHEMBL25", parents)
 
     def test_top_k_limits_the_number_of_hits(self):
-        hits = search_by_similarity(ASPIRIN, threshold=0.5, top_k=3, version=self.version)
+        hits = search_by_similarity(ASPIRIN, threshold=0.5, top_k=3, version=LOCAL_CHEMBL_VERSION)
         self.assertEqual(len(hits), 3)
 
     def test_higher_threshold_returns_a_subset(self):
-        loose = search_by_similarity(ASPIRIN, threshold=0.6, version=self.version)
-        strict = search_by_similarity(ASPIRIN, threshold=0.9, version=self.version)
+        loose = search_by_similarity(ASPIRIN, threshold=0.6, version=LOCAL_CHEMBL_VERSION)
+        strict = search_by_similarity(ASPIRIN, threshold=0.9, version=LOCAL_CHEMBL_VERSION)
         self.assertLessEqual(len(strict), len(loose))
         self.assertTrue(set(strict["molecule_chembl_id"]).issubset(set(loose["molecule_chembl_id"])))
 
     def test_results_are_sorted_by_descending_similarity(self):
-        hits = search_by_similarity(ASPIRIN, threshold=0.6, version=self.version)
+        hits = search_by_similarity(ASPIRIN, threshold=0.6, version=LOCAL_CHEMBL_VERSION)
         self.assertEqual(hits["similarity"].tolist(), sorted(hits["similarity"], reverse=True))
 
-    def test_unusable_query_yields_an_empty_frame_without_raising(self):
-        hits = search_by_similarity("this-is-not-a-smiles", version=self.version)
-        self.assertTrue(hits.empty)
-        self.assertIn("molecule_chembl_id", hits.columns)
+    def test_unusable_query_is_reported_rather_than_dropped(self):
+        """Like search_by_structure, a query that yields nothing still owns a row."""
+        hits = search_by_similarity("this-is-not-a-smiles", version=LOCAL_CHEMBL_VERSION)
+        self.assertEqual(hits["query_smiles"].tolist(), ["this-is-not-a-smiles"])
+        self.assertTrue(hits["molecule_chembl_id"].isna().all())
+
+    def test_every_query_appears_in_the_output(self):
+        queries = [ASPIRIN, "this-is-not-a-smiles"]
+        hits = search_by_similarity(queries, threshold=0.9, version=LOCAL_CHEMBL_VERSION)
+        self.assertEqual(set(hits["query_smiles"]), set(queries))
 
 
 if __name__ == "__main__":

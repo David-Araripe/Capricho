@@ -2,6 +2,7 @@
 
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
 from textwrap import dedent
 from typing import List, Optional, Sequence, Tuple, Union
@@ -18,6 +19,17 @@ PYSTOW_PARTS = ["chembl"]
 PYSTOW_CONFIG = {"name": "chembl_downloader_config_{version}.json"}
 
 
+@lru_cache(maxsize=1)
+def _latest_version() -> str:
+    """Resolve the latest ChEMBL release, once per process.
+
+    ``chembl_downloader.latest`` performs an uncached HTTPS request to the EBI server on every
+    call, and every query function here resolves a version. Caching keeps that to a single request
+    and also pins all queries in a run to the same release.
+    """
+    return latest()
+
+
 def _get_kwargs_where_clauses(**kwargs):
     """Generate WHERE clauses for SQL queries based on kwargs."""
     where_clauses = []
@@ -31,7 +43,7 @@ def _get_kwargs_where_clauses(**kwargs):
 
 
 def _get_config_file(version: Optional[Union[int, str]] = None) -> Path:
-    version = version if version is not None else latest()
+    version = version if version is not None else _latest_version()
     version = str(version) if isinstance(version, int) else version
     return pystow.join(*(PYSTOW_PARTS), name=PYSTOW_CONFIG["name"].format(version=version))
 
@@ -55,7 +67,7 @@ def check_and_download_chembl_db(
         Path to the ChEMBL SQLite database
     """
     # if present, config file override the default path, unless a prefix is defined
-    version = version if version is not None else latest()
+    version = version if version is not None else _latest_version()
     config_file = _get_config_file(version)
     configs = {"prefix": (prefix if prefix is not None else PYSTOW_PARTS), "version": version}
 
@@ -182,7 +194,7 @@ def get_compound_table_sql(
             md.prodrug,
             md.max_phase,
             md.therapeutic_flag,
-            md.withdrawn_flag,
+            md.withdrawn_flag
         FROM
             molecule_dictionary md
         JOIN compound_structures cs ON md.molregno = cs.molregno
@@ -254,6 +266,16 @@ _COMPOUND_LOOKUP_QUERY = dedent("""\
     WHERE
         {where_clause}
     """)
+
+#: Columns _COMPOUND_LOOKUP_QUERY returns; keep in step with its SELECT list.
+COMPOUND_HIT_COLUMNS = [
+    "molecule_chembl_id",
+    "molregno",
+    "canonical_smiles",
+    "standard_inchi_key",
+    "parent_chembl_id",
+    "parent_smiles",
+]
 
 CONNECTIVITY_PATTERN = re.compile(r"^[A-Z]{14}$")
 

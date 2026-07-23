@@ -16,6 +16,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
+# chembl_downloader has no public accessor for the .h5 asset; `_download_helper` builds the release
+# URL and stores the file through pystow, the same way `download_fps` does for .fps.gz. Kept at
+# module level so the private surface this package depends on is visible in one grep.
+from chembl_downloader.api import _download_helper
+
 from ...logger import logger
 from .downloader import check_and_download_chembl_db
 
@@ -46,32 +51,33 @@ def check_and_download_fingerprint_index(
     Returns:
         Path: path to the local FPSim2 ``.h5`` index.
     """
-    # chembl_downloader has no public accessor for the .h5 asset; `_download_helper` builds the
-    # release URL and stores the file through pystow, the same way `download_fps` does for .fps.gz.
-    from chembl_downloader.api import _download_helper
-
     configs = check_and_download_chembl_db(prefix=prefix, version=version)
 
-    fp_path = _download_helper(
-        suffix=".h5",
-        version=configs["version"],
-        prefix=configs["prefix"],
-        return_version=False,
-    )
-
-    if fp_path is None or not Path(fp_path).exists():
-        raise FileNotFoundError(
-            f"Could not download the ChEMBL fingerprint index for version {configs['version']}. "
-            "Check that the release publishes a chembl_<version>.h5 file on the EBI FTP server."
+    try:
+        fp_path = _download_helper(
+            suffix=".h5",
+            version=configs["version"],
+            prefix=configs["prefix"],
+            return_version=False,
         )
+    except ValueError as exc:
+        raise FileNotFoundError(
+            f"Could not obtain the ChEMBL fingerprint index for version {configs['version']}. "
+            "Check that the release publishes a chembl_<version>.h5 file on the EBI FTP server."
+        ) from exc
 
     logger.debug(f"Using ChEMBL fingerprint index at:\n\t{fp_path}")
     return Path(fp_path)
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=1)
 def _load_engine(fp_path: str, in_memory: bool) -> "FPSim2Engine":
-    """Load and cache an FPSim2 engine. Cached because loading the index costs a few seconds."""
+    """Load and cache an FPSim2 engine.
+
+    Cached because loading the index costs a few seconds. Only one engine is held, since an
+    in-memory index for a full ChEMBL release is roughly 1 GB; use
+    :func:`clear_fingerprint_index_cache` to release it.
+    """
     try:
         from FPSim2 import FPSim2Engine
     except ImportError as exc:
@@ -103,3 +109,8 @@ def load_fingerprint_index(
     """
     fp_path = check_and_download_fingerprint_index(prefix=prefix, version=version)
     return _load_engine(str(fp_path), in_memory)
+
+
+def clear_fingerprint_index_cache() -> None:
+    """Release the cached fingerprint index, freeing roughly 1 GB for an in-memory engine."""
+    _load_engine.cache_clear()
