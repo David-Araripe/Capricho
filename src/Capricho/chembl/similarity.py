@@ -7,12 +7,16 @@ The first two run against the local database; once it is downloaded their only n
 resolving which ChEMBL release is latest, which passing ``version=`` avoids entirely.
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Sequence, Union
+from numbers import Integral
 
 import numpy as np
 import pandas as pd
 from chemFilters.chem.standardizers import ChemStandardizer, InchiHandling
+from rdkit import Chem
 
 from ..core.fp_utils import calculate_mixed_FPs
 from ..core.smiles_utils import clean_mixtures
@@ -104,7 +108,7 @@ def get_and_curate_chembl_compounds(
     df = df.assign(fps=fps).assign(repeats=False)
     repeats_idxs = repeated_indices_from_array_series(df["fps"])
     for repeats in repeats_idxs:
-        min_id = sorted(df.loc[repeats, "molecule_chembl_id"], key=lambda _id: int(_id.lstrip("CHEMBL")))[0]
+        min_id = min(df.loc[repeats, "molecule_chembl_id"], key=lambda _id: int(_id.lstrip("CHEMBL")))
         df.loc[repeats, "repeats"] = min_id
 
     df = df.drop(columns=["fps"])
@@ -112,14 +116,14 @@ def get_and_curate_chembl_compounds(
     return df
 
 
-def _as_smiles_list(smiles: Union[str, Sequence[str]]) -> List[str]:
+def _as_smiles_list(smiles: str | Sequence[str]) -> list[str]:
     """Accept a single SMILES or a sequence of them and always return a list."""
     if isinstance(smiles, str):
         return [smiles]
     return list(smiles)
 
 
-def _describe_queries(smiles: List[str], standardize: bool, chirality: bool, n_jobs: int) -> pd.DataFrame:
+def _describe_queries(smiles: list[str], standardize: bool, chirality: bool, n_jobs: int) -> pd.DataFrame:
     """Build the query frame holding, per input SMILES, the structure keys used for lookup.
 
     Returns a DataFrame with query_smiles, standard_smiles, query_inchikey and connectivity.
@@ -148,6 +152,7 @@ def _describe_queries(smiles: List[str], standardize: bool, chirality: bool, n_j
 
     queries = pd.DataFrame(
         {
+            "_query_index": range(len(smiles)),
             "query_smiles": smiles,
             "standard_smiles": standard_smiles,
             "query_inchikey": query_inchikeys,
@@ -157,12 +162,12 @@ def _describe_queries(smiles: List[str], standardize: bool, chirality: bool, n_j
 
 
 def search_by_structure(
-    smiles: Union[str, Sequence[str]],
+    smiles: str | Sequence[str],
     standardize: bool = True,
     chirality: bool = True,
     n_jobs: int = 1,
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
 ) -> pd.DataFrame:
     """Find the ChEMBL entries that describe the same compound as each query SMILES.
 
@@ -206,7 +211,18 @@ def search_by_structure(
         columns (molecule_chembl_id, molregno, canonical_smiles, standard_inchi_key,
         parent_chembl_id, parent_smiles).
     """
-    queries = _describe_queries(_as_smiles_list(smiles), standardize, chirality, n_jobs)
+    query_list = _as_smiles_list(smiles)
+    output_columns = [
+        "query_smiles",
+        "standard_smiles",
+        "query_inchikey",
+        "connectivity",
+        "match_type",
+    ] + COMPOUND_HIT_COLUMNS
+    if not query_list:
+        return pd.DataFrame(columns=output_columns)
+
+    queries = _describe_queries(query_list, standardize, chirality, n_jobs)
 
     searchable = queries.dropna(subset=["query_inchikey"])
     if searchable.empty:
@@ -233,34 +249,31 @@ def search_by_structure(
         default="connectivity",
     )
 
-    # Order exact hits ahead of the looser connectivity hits, keeping the input order of queries.
+    # Keep query occurrences in input order, with exact hits before connectivity-only hits.
     result = result.sort_values(
-        ["match_type", "molecule_chembl_id"],
+        ["_query_index", "match_type", "molecule_chembl_id"],
         key=lambda col: col.map(MATCH_TYPE_ORDER) if col.name == "match_type" else col,
         kind="stable",
     ).reset_index(drop=True)
 
     matched = result[result["match_type"] != "no_match"]
     logger.info(
-        f"Structure search matched {matched['query_smiles'].nunique()}/{len(queries)} queries "
+        f"Structure search matched {matched['_query_index'].nunique()}/{len(queries)} queries "
         f"to {len(matched)} ChEMBL compounds."
     )
 
-    return result[
-        ["query_smiles", "standard_smiles", "query_inchikey", "connectivity", "match_type"]
-        + COMPOUND_HIT_COLUMNS
-    ]
+    return result[output_columns]
 
 
 def search_by_similarity(
-    smiles: Union[str, Sequence[str]],
+    smiles: str | Sequence[str],
     threshold: float = 0.7,
-    top_k: Optional[int] = None,
+    top_k: int | None = None,
     metric: str = "tanimoto",
     n_workers: int = 1,
     in_memory: bool = True,
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
 ) -> pd.DataFrame:
     """Rank every compound in ChEMBL by fingerprint similarity to each query SMILES.
 
@@ -278,8 +291,8 @@ def search_by_similarity(
 
     Args:
         smiles: a single SMILES or a sequence of SMILES to search with.
-        threshold: minimum similarity coefficient a compound must reach to be returned.
-            Defaults to 0.7; FPSim2 performs best at thresholds of 0.7 and above.
+        threshold: minimum similarity coefficient a compound must reach to be returned. Must be
+            greater than zero. Defaults to 0.7; FPSim2 performs best at 0.7 and above.
         top_k: if given, keep only the k most similar compounds per query. The threshold still
             applies, so fewer than k compounds may be returned. Defaults to None.
         metric: similarity metric, one of "tanimoto", "dice" or "cosine". Defaults to "tanimoto".
@@ -297,46 +310,63 @@ def search_by_similarity(
         with null hit columns, so every input is accounted for in the output. Drop them with
         ``.dropna(subset=["molecule_chembl_id"])``.
     """
-    if not 0 <= threshold <= 1:
-        raise ValueError(f"'threshold' must be between 0 and 1, got {threshold}")
-    if top_k is not None and top_k < 1:
+    if not 0 < threshold <= 1:
+        raise ValueError(f"'threshold' must be greater than 0 and at most 1, got {threshold}")
+    if top_k is not None and (isinstance(top_k, bool) or not isinstance(top_k, Integral) or top_k < 1):
         raise ValueError(f"'top_k' must be a positive integer, got {top_k}")
+    if isinstance(n_workers, bool) or not isinstance(n_workers, Integral) or n_workers < 1:
+        raise ValueError(f"'n_workers' must be a positive integer, got {n_workers}")
     if metric not in SIMILARITY_METRICS:
         raise ValueError(f"'metric' must be one of {sorted(SIMILARITY_METRICS)}, got {metric!r}")
 
     query_list = _as_smiles_list(smiles)
-    engine = load_fingerprint_index(prefix=prefix, version=version, in_memory=in_memory)
+    if not query_list:
+        return pd.DataFrame(columns=["query_smiles", "similarity"] + COMPOUND_HIT_COLUMNS)
 
-    # Both choices are fixed for the whole call, so resolve the engine method once and leave the
-    # loop to deal with results only. The on-disk variants take no n_workers.
-    method = "top_k" if top_k is not None else "similarity"
-    search = getattr(engine, method if in_memory else f"on_disk_{method}")
-    search_kwargs = {"threshold": threshold, "metric": metric}
-    if top_k is not None:
-        search_kwargs["k"] = top_k
-    if in_memory:
-        search_kwargs["n_workers"] = n_workers
+    parsed_queries = []
+    for query_index, smi in enumerate(query_list):
+        if not isinstance(smi, str):
+            logger.warning(f"Similarity search requires a SMILES string, got {smi!r}")
+            continue
+        try:
+            query_mol = Chem.MolFromSmiles(smi)
+        except (RuntimeError, ValueError) as exc:
+            logger.warning(f"Could not parse the query SMILES {smi!r}: {exc}")
+            continue
+        if query_mol is None or query_mol.GetNumAtoms() == 0:
+            logger.warning(f"Could not parse a non-empty molecule from the query SMILES: {smi!r}")
+            continue
+        parsed_queries.append((query_index, smi, query_mol))
 
     searches = []
-    for smi in query_list:
-        try:
-            found = search(smi, **search_kwargs)
-        except Exception as exc:  # RDKit and FPSim2 raise different errors for unusable queries
-            logger.warning(f"Similarity search failed for the query SMILES {smi!r}: {exc}")
-            continue
-        if len(found) == 0:
-            logger.warning(f"No compound reached a similarity of {threshold} for the query: {smi}")
-            continue
-        searches.append(
-            pd.DataFrame(found)
-            .rename(columns={"mol_id": "molregno", "coeff": "similarity"})
-            .assign(query_smiles=smi)
-        )
+    if parsed_queries:
+        engine = load_fingerprint_index(prefix=prefix, version=version, in_memory=in_memory)
+
+        # Both choices are fixed for the whole call, so resolve the engine method once and leave
+        # the loop to deal with results only.
+        method = "top_k" if top_k is not None else "similarity"
+        search = getattr(engine, method if in_memory else f"on_disk_{method}")
+        search_kwargs = {"threshold": threshold, "metric": metric, "n_workers": n_workers}
+        if top_k is not None:
+            search_kwargs["k"] = top_k
+
+        for query_index, smi, query_mol in parsed_queries:
+            # Passing the parsed molecule means invalid input is handled above while index, I/O,
+            # and worker failures propagate instead of being misreported as an unmatched query.
+            found = search(query_mol, **search_kwargs)
+            if len(found) == 0:
+                logger.warning(f"No compound reached a similarity of {threshold} for the query: {smi}")
+                continue
+            searches.append(
+                pd.DataFrame(found)
+                .rename(columns={"mol_id": "molregno", "coeff": "similarity"})
+                .assign(_query_index=query_index, query_smiles=smi)
+            )
 
     hits = (
         pd.concat(searches, ignore_index=True)
         if searches
-        else pd.DataFrame(columns=["query_smiles", "molregno", "similarity"])
+        else pd.DataFrame(columns=["_query_index", "query_smiles", "molregno", "similarity"])
     )
     molregnos = hits["molregno"].unique().tolist()
     compounds = (
@@ -346,19 +376,19 @@ def search_by_similarity(
     )
     hits = hits.merge(compounds.reindex(columns=COMPOUND_HIT_COLUMNS), on="molregno", how="left")
 
-    # Left-merge from the query list so queries without hits keep a row, exactly as
-    # search_by_structure does, and callers can always join results back to their inputs.
+    # Merge on a per-occurrence identifier, rather than SMILES text, so duplicate queries do not
+    # create a Cartesian product. The identifier also preserves the caller's input order.
     result = (
-        pd.DataFrame({"query_smiles": query_list})
-        .merge(hits, on="query_smiles", how="left")
-        .sort_values(["query_smiles", "similarity"], ascending=[True, False], kind="stable")
+        pd.DataFrame({"_query_index": range(len(query_list)), "query_smiles": query_list})
+        .merge(hits, on=["_query_index", "query_smiles"], how="left")
+        .sort_values(["_query_index", "similarity"], ascending=[True, False], kind="stable")
         .reset_index(drop=True)
     )
 
     matched = result.dropna(subset=["molecule_chembl_id"])
     logger.info(
         f"Similarity search returned {len(matched)} compounds for "
-        f"{matched['query_smiles'].nunique()}/{len(query_list)} queries "
+        f"{matched['_query_index'].nunique()}/{len(query_list)} queries "
         f"at a {metric} threshold of {threshold}."
     )
 

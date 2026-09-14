@@ -33,24 +33,25 @@ The development of CAPRICHO is guided by two core principles:
 
 ## ⚙️ Installation
 
-The most recent release can be installed from PyPI with uv:
-```shell
-uv pip install capricho
-```
+With pip, into the environment you work in — the `capricho` command comes with it:
 
-or with pip:
 ```shell
 python -m pip install capricho
 ```
 
-Alternatively, install directly from the GitHub repository with uv using the command:
+With [uv](https://docs.astral.sh/uv/), either install it as a standalone command, available anywhere:
+
 ```shell
-uv pip install git+https://github.com/David-Araripe/Capricho.git
+uv tool install capricho
 ```
-or with pip
+
+or add it to a project, where it is importable as a library too and runs as `uv run capricho`:
+
 ```shell
-python -m pip install git+https://github.com/David-Araripe/Capricho.git
+uv add capricho
 ```
+
+Check the installation with `capricho -h`. For the development version, swap `capricho` for `git+https://github.com/David-Araripe/Capricho.git` in any of the commands above.
 
 ## 🚀 Quick Start
 
@@ -58,6 +59,9 @@ python -m pip install git+https://github.com/David-Araripe/Capricho.git
 ```bash
 # Download ChEMBL database
 capricho download
+
+# ...or use a ChEMBL SQLite dump you already have, read where it lies
+capricho download --set-from-path /path/to/chembl_35.db
 
 # Get bioactivity data for EGFR
 capricho get --target-ids CHEMBL203 --output-path egfr_data.csv

@@ -2,14 +2,16 @@
 
 import json
 import re
+import sqlite3
+from contextlib import closing, contextmanager
 from functools import lru_cache
 from pathlib import Path
 from textwrap import dedent
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 import pystow
-from chembl_downloader import download_extract_sqlite, latest, query
+from chembl_downloader import connect, download_extract_sqlite, latest
 from chembl_downloader.api import _find_sqlite_file
 
 from ...logger import logger
@@ -18,15 +20,32 @@ from ..exceptions import BioactivitiesNotFoundError
 PYSTOW_PARTS = ["chembl"]
 PYSTOW_CONFIG = {"name": "chembl_downloader_config_{version}.json"}
 
+# ChEMBL SQLite dumps are named after their release, e.g. chembl_35.db or chembl_24_1.db.
+CHEMBL_DB_FILENAME = re.compile(r"^chembl_(\d+(?:_\d+)?)\.db$")
+
+# Every dump states its own release in the `version` table, alongside rows for the other
+# resources it embeds (Bioassay Ontology, COCONUT), e.g. name = "ChEMBL_36".
+CHEMBL_VERSION_ROW = re.compile(r"^ChEMBL_(\d+(?:[._]\d+)?)$", re.IGNORECASE)
+
+# Tables read by the queries in this module. Used to tell a ChEMBL dump apart from any
+# other SQLite file a user might point at.
+REQUIRED_TABLES = frozenset(
+    {
+        "activities",
+        "assays",
+        "compound_structures",
+        "docs",
+        "molecule_dictionary",
+        "molecule_hierarchy",
+        "target_dictionary",
+        "variant_sequences",
+    }
+)
+
 
 @lru_cache(maxsize=1)
 def _latest_version() -> str:
-    """Resolve the latest ChEMBL release, once per process.
-
-    ``chembl_downloader.latest`` performs an uncached HTTPS request to the EBI server on every
-    call, and every query function here resolves a version. Caching keeps that to a single request
-    and also pins all queries in a run to the same release.
-    """
+    """Resolve and pin the latest ChEMBL release for the lifetime of this process."""
     return latest()
 
 
@@ -48,13 +67,241 @@ def _get_config_file(version: Optional[Union[int, str]] = None) -> Path:
     return pystow.join(*(PYSTOW_PARTS), name=PYSTOW_CONFIG["name"].format(version=version))
 
 
+def _version_from_filename(path: Path) -> Optional[str]:
+    """Read the ChEMBL release out of a database file name, or None if it doesn't carry one."""
+    match = CHEMBL_DB_FILENAME.match(path.name)
+    return match.group(1).replace("_", ".") if match else None
+
+
+def _validate_chembl_db(path: Path) -> None:
+    """Check that a file is a readable SQLite database holding the ChEMBL tables.
+
+    Args:
+        path: path to the candidate database file.
+
+    Raises:
+        ValueError: if the file cannot be read as SQLite or lacks the ChEMBL tables.
+    """
+    try:
+        with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as conn:
+            tables = {
+                row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+    except sqlite3.DatabaseError as error:
+        raise ValueError(f"{path} is not a readable SQLite database: {error}") from error
+
+    missing = REQUIRED_TABLES - tables
+    if missing:
+        raise ValueError(
+            f"{path} does not look like a ChEMBL database. Missing tables: {', '.join(sorted(missing))}"
+        )
+
+
+def _read_reported_release(path: Path) -> Optional[str]:
+    """Read the ChEMBL release a database states for itself, or None if it does not state one.
+
+    Args:
+        path: path to the ChEMBL SQLite database.
+
+    Returns:
+        The release from the `version` table, e.g. "36", or None when the table is absent or
+        holds no ChEMBL row.
+    """
+    try:
+        with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as conn:
+            names = [row[0] for row in conn.execute("SELECT name FROM version")]
+    except sqlite3.DatabaseError:  # no `version` table, as in trimmed or hand-built databases
+        return None
+
+    for name in names:
+        match = CHEMBL_VERSION_ROW.match(name or "")
+        if match:
+            return match.group(1).replace("_", ".")
+    return None
+
+
+def _check_release_matches(path: Path, claimed: str) -> None:
+    """Check a database against the release it is about to be registered under.
+
+    A file name can be wrong and a `--version` can be a typo, and a release registered
+    wrongly would misreport the provenance of every dataset drawn from it. The release the
+    database states for itself settles the question.
+
+    Args:
+        path: path to the ChEMBL SQLite database.
+        claimed: the release the database is about to be registered under.
+
+    Raises:
+        ValueError: if the database states a different release than the one claimed.
+    """
+    reported = _read_reported_release(path)
+
+    if reported is None:
+        logger.warning(
+            f"{path} does not state its own release, so it is registered as ChEMBL {claimed} on "
+            "the strength of its file name alone. Check that this is the release you meant."
+        )
+        return
+
+    if reported != str(claimed):
+        raise ValueError(
+            f"{path} states that it is ChEMBL {reported}, not ChEMBL {claimed}. Registering it "
+            f"as ChEMBL {claimed} would misreport the provenance of every dataset drawn from it. "
+            f"Register it as ChEMBL {reported}, or check that this is the file you meant."
+        )
+
+    logger.debug(f"{path} confirms it is ChEMBL {reported}")
+
+
+def _discover_chembl_dbs(path: Path, version: Optional[Union[int, str]] = None) -> Dict[str, Path]:
+    """Map ChEMBL release to database file for a file or directory the user points at.
+
+    Args:
+        path: a `chembl_<version>.db` file, or a directory holding one or more of them.
+        version: only keep this release. Defaults to None, keeping every release found.
+
+    Returns:
+        Mapping of ChEMBL release to the database file holding it.
+
+    Raises:
+        FileNotFoundError: if the path does not exist or holds no matching database.
+        ValueError: if the release cannot be read from a file name and none was given.
+    """
+    path = path.expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"No such file or directory: {path}")
+
+    if path.is_file():
+        file_version = str(version) if version is not None else _version_from_filename(path)
+        if file_version is None:
+            raise ValueError(
+                f"Cannot tell which ChEMBL release {path.name} holds, since the file name does "
+                "not follow the chembl_<version>.db convention. Pass the release explicitly, "
+                "e.g. --version 35."
+            )
+        return {file_version: path}
+
+    databases = {}
+    for candidate in sorted(path.rglob("chembl_*.db")):
+        candidate_version = _version_from_filename(candidate)
+        if candidate_version is not None:
+            databases[candidate_version] = candidate
+
+    if not databases:
+        raise FileNotFoundError(f"No chembl_<version>.db file found under {path}")
+
+    if version is not None:
+        wanted = str(version)
+        if wanted not in databases:
+            raise FileNotFoundError(
+                f"No chembl_{wanted}.db found under {path}. "
+                f"Releases available there: {', '.join(sorted(databases))}"
+            )
+        return {wanted: databases[wanted]}
+
+    return databases
+
+
+def set_chembl_db_path(
+    path: Union[str, Path], version: Optional[Union[int, str]] = None
+) -> Dict[str, Path]:
+    """Register an already-available ChEMBL SQLite database so queries read it where it lies.
+
+    Writes a configuration file per release under `~/.data/chembl/`, which
+    `check_and_download_chembl_db` then honours instead of downloading the release.
+
+    Args:
+        path: a `chembl_<version>.db` file, or a directory holding one or more of them.
+        version: only register this release. Required when the file name does not carry the
+            release. Defaults to None, registering every release found under the path.
+
+    Returns:
+        Mapping of the registered ChEMBL releases to their database files.
+
+    Raises:
+        ValueError: if a database is not a ChEMBL dump, or states a release other than the one
+            it would be registered under.
+    """
+    databases = _discover_chembl_dbs(Path(path), version=version)
+
+    # Check every database before writing anything, so a bad one cannot leave half the
+    # releases of a directory registered.
+    for db_version, db_path in databases.items():
+        _validate_chembl_db(db_path)
+        _check_release_matches(db_path, db_version)
+
+    for db_version, db_path in databases.items():
+        configs = {"prefix": PYSTOW_PARTS, "version": db_version, "path": str(db_path)}
+        config_file = _get_config_file(db_version)
+        config_file.write_text(json.dumps(configs, indent=2))
+        logger.info(f"ChEMBL {db_version} will be read from:\n\t{db_path}")
+        logger.debug(f"Wrote configuration to:\n\t{config_file}")
+
+    return databases
+
+
+def unset_chembl_db_path(version: Optional[Union[int, str]] = None) -> bool:
+    """Forget the database registered for a release, so it is downloaded again when queried.
+
+    Args:
+        version: ChEMBL release to forget. Defaults to None, resolving to the latest release.
+
+    Returns:
+        Whether a configuration file was removed.
+    """
+    config_file = _get_config_file(version)
+    if not config_file.exists():
+        logger.warning(f"No ChEMBL configuration to remove at:\n\t{config_file}")
+        return False
+
+    config_file.unlink()
+    logger.info(f"Removed ChEMBL configuration:\n\t{config_file}")
+    return True
+
+
+@contextmanager
+def connect_chembl(configs: dict) -> Iterator[sqlite3.Connection]:
+    """Connect to the ChEMBL database described by a configuration mapping.
+
+    Args:
+        configs: mapping as returned by `check_and_download_chembl_db`. A `path` entry points
+            at a database registered with `set_chembl_db_path`; otherwise the release is
+            resolved from the pystow `prefix` and `version`.
+
+    Yields:
+        An open connection to the ChEMBL SQLite database.
+    """
+    if configs.get("path"):
+        with closing(sqlite3.connect(Path(configs["path"]).as_posix())) as conn:
+            yield conn
+    else:
+        with connect(version=configs["version"], prefix=configs["prefix"]) as conn:
+            yield conn
+
+
+def run_query(sql: str, configs: dict, params: Optional[Sequence] = None) -> pd.DataFrame:
+    """Run a SQL query against the ChEMBL database described by a configuration mapping.
+
+    Args:
+        sql: the SQL query to run.
+        configs: mapping as returned by `check_and_download_chembl_db`.
+        params: optional values bound to placeholders in ``sql``.
+
+    Returns:
+        pd.DataFrame: the query result.
+    """
+    with connect_chembl(configs) as conn:
+        return pd.read_sql(sql, conn, params=params)
+
+
 def check_and_download_chembl_db(
     prefix: Optional[Sequence[str]] = None,
     version: Optional[Union[int, str]] = None,
-) -> pd.DataFrame:
+) -> dict:
     """Check if the ChEMBL database is present. Download and extract it if not. After extraction,
     remove the tarball to free up space. This method is also used to assert the correct downloaded
-    ChEMBL version is used across different query functions.
+    ChEMBL version is used across different query functions. Nothing is downloaded when the release
+    was registered with `set_chembl_db_path`; that database is read where it lies.
 
     Args:
         prefix: Optional prefix for an alternative data directory with path components passed as a list of strings.
@@ -64,7 +311,8 @@ def check_and_download_chembl_db(
             available version. Defaults to None.
 
     Returns:
-        Path to the ChEMBL SQLite database
+        Configuration describing the database to query: the pystow `prefix` and `version`, plus a
+        `path` entry when the release was registered from a database already on the system.
     """
     # if present, config file override the default path, unless a prefix is defined
     version = version if version is not None else _latest_version()
@@ -72,9 +320,24 @@ def check_and_download_chembl_db(
     configs = {"prefix": (prefix if prefix is not None else PYSTOW_PARTS), "version": version}
 
     if config_file.exists():  # only exists if that version was downloaded to custom path before
-        logger.info(f"Loaded ChEMBL configuration from:\n\t{config_file}")
+        logger.debug(f"Loaded ChEMBL configuration from:\n\t{config_file}")
         configs = json.loads(config_file.read_text())
         logger.debug(f"configuration:\n{json.dumps(configs, indent=2)}")
+
+    if configs.get("path"):  # a database the user registered with `set_chembl_db_path`
+        db_path = Path(configs["path"])
+        if not db_path.exists():
+            raise FileNotFoundError(
+                f"ChEMBL {configs['version']} was registered at {db_path}, which no longer exists. "
+                "Point CAPRICHO at the database again with `capricho download --set-from-path "
+                "<path>`, or run `capricho download --unset-path --version "
+                f"{configs['version']}` to download the release instead."
+            )
+        logger.info(
+            f"Reading ChEMBL {configs['version']} from the database you registered:\n\t{db_path}"
+        )
+        logger.debug(f"Registration is held in:\n\t{config_file}")
+        return configs
 
     sql_path = _find_sqlite_file(pystow.join(*(configs["prefix"]), f"{configs['version']}"))
     if sql_path is None:
@@ -87,7 +350,7 @@ def check_and_download_chembl_db(
         if prefix is not None:
             config_file.write_text(json.dumps(configs, indent=2))
     else:
-        logger.debug(f"Loaded local ChEMBL database at:\n\t{sql_path}")
+        logger.info(f"Reading ChEMBL {configs['version']} from:\n\t{sql_path}")
 
     return configs
 
@@ -140,11 +403,7 @@ def get_document_table_sql(
 
     logger.debug(f"Generated SQL query for documents:\n{query_str}")
 
-    result = query(
-        query_str,
-        version=downloader_configs["version"],
-        prefix=downloader_configs["prefix"],
-    )
+    result = run_query(query_str, downloader_configs)
 
     if result.empty:
         logger.warning(f"No publication details found for document IDs: {document_chembl_ids}")
@@ -207,11 +466,7 @@ def get_compound_table_sql(
 
     logger.debug(f"Generated SQL query for compounds:\n{query_str}")
 
-    result = query(
-        query_str,
-        version=downloader_configs["version"],
-        prefix=downloader_configs["prefix"],
-    )
+    result = run_query(query_str, downloader_configs)
 
     if result.empty:
         raise ValueError(f"No information found for molecule IDs: {molecule_chembl_ids}")
@@ -231,11 +486,7 @@ def get_compound_table_sql(
                 mh.parent_molregno IN ({', '.join(map(str, parent_molregnos))})
             """)
 
-        parent_data = query(
-            parent_query,
-            version=downloader_configs["version"],
-            prefix=downloader_configs["prefix"],
-        )
+        parent_data = run_query(parent_query, downloader_configs)
 
         # Merge parent information if available
         if not parent_data.empty:
@@ -267,7 +518,7 @@ _COMPOUND_LOOKUP_QUERY = dedent("""\
         {where_clause}
     """)
 
-#: Columns _COMPOUND_LOOKUP_QUERY returns; keep in step with its SELECT list.
+#: Columns returned by ``_COMPOUND_LOOKUP_QUERY``; keep in step with its SELECT list.
 COMPOUND_HIT_COLUMNS = [
     "molecule_chembl_id",
     "molregno",
@@ -278,68 +529,72 @@ COMPOUND_HIT_COLUMNS = [
 ]
 
 CONNECTIVITY_PATTERN = re.compile(r"^[A-Z]{14}$")
+INCHIKEY_PATTERN = re.compile(r"^[A-Z]{14}-[A-Z]{10}-[A-Z]$")
+SQLITE_LOOKUP_BATCH_SIZE = 500
+
+
+def _batches(values: Sequence, size: int = SQLITE_LOOKUP_BATCH_SIZE):
+    """Yield bounded lists so lookups stay below SQLite parameter/expression limits."""
+    for start in range(0, len(values), size):
+        yield values[start : start + size]
 
 
 def get_compounds_by_inchikey_sql(
-    inchi_keys: Optional[List[str]] = None,
-    connectivities: Optional[List[str]] = None,
+    inchi_keys: Optional[Sequence[str]] = None,
+    connectivities: Optional[Sequence[str]] = None,
     prefix: Optional[Sequence[str]] = None,
     version: Optional[Union[int, str]] = None,
 ) -> pd.DataFrame:
-    """Look up compounds by full standard InChI key and/or by connectivity.
-
-    A full InChI key identifies a single structure including stereochemistry and protonation
-    state. A connectivity, the first 14 characters of the key, identifies the molecular skeleton
-    and therefore also matches stereoisomers and salt forms of the same compound. Both are
-    resolved against the indexed ``standard_inchi_key`` column, so lookups stay in the
-    millisecond range even though ``compound_structures`` holds ~2.9M rows.
+    """Look up compounds by full standard InChIKey and/or connectivity block.
 
     Args:
-        inchi_keys: list of full standard InChI keys to match exactly. Defaults to None.
-        connectivities: list of 14-character connectivities to match as key prefixes.
-            Defaults to None.
-        prefix: Optional prefix for an alternative data directory.
-        version: Optional ChEMBL version to use.
+        inchi_keys: full standard InChIKeys to match exactly.
+        connectivities: 14-character connectivity blocks to match as key prefixes.
+        prefix: optional prefix for an alternative data directory.
+        version: optional ChEMBL version to use.
 
     Returns:
-        pd.DataFrame: molecule_chembl_id, molregno, canonical_smiles, standard_inchi_key and the
-        parent compound from ``molecule_hierarchy``. Empty if nothing matched.
+        Compound identifiers, structures, and parent-compound information. The result is empty
+        when nothing matches.
     """
     if not inchi_keys and not connectivities:
         raise ValueError("Provide at least one of 'inchi_keys' or 'connectivities'.")
 
-    where_clauses = []
-    if inchi_keys:
-        key_placeholders = ", ".join([f"'{key}'" for key in sorted(set(inchi_keys))])
-        where_clauses.append(f"cs.standard_inchi_key IN ({key_placeholders})")
+    unique_keys = sorted(set(inchi_keys or []))
+    for key in unique_keys:
+        if not isinstance(key, str) or not INCHIKEY_PATTERN.fullmatch(key):
+            raise ValueError(f"Invalid standard InChIKey: {key!r}")
 
-    for connectivity in sorted(set(connectivities or [])):
-        if not CONNECTIVITY_PATTERN.match(connectivity):
+    unique_connectivities = sorted(set(connectivities or []))
+    for connectivity in unique_connectivities:
+        if not isinstance(connectivity, str) or not CONNECTIVITY_PATTERN.fullmatch(connectivity):
             raise ValueError(
                 f"Invalid connectivity {connectivity!r}: expected 14 uppercase letters, "
-                "i.e. the first block of a standard InChI key."
+                "i.e. the first block of a standard InChIKey."
             )
-        # GLOB with a trailing wildcard is rewritten by SQLite into a range scan on
-        # idx_cmpdstr_stdkey, unlike substr(), which would force a full table scan.
-        where_clauses.append(f"cs.standard_inchi_key GLOB '{connectivity}*'")
 
     downloader_configs = check_and_download_chembl_db(prefix=prefix, version=version)
+    frames = []
+    for batch in _batches(unique_keys):
+        where_clause = f"cs.standard_inchi_key IN ({', '.join('?' for _ in batch)})"
+        query_str = _COMPOUND_LOOKUP_QUERY.format(where_clause=where_clause)
+        logger.debug(f"Generated SQL query for compound lookup:\n{query_str}")
+        frames.append(run_query(query_str, downloader_configs, params=batch))
 
-    query_str = _COMPOUND_LOOKUP_QUERY.format(where_clause=" OR\n        ".join(where_clauses))
-    logger.debug(f"Generated SQL query for compound lookup:\n{query_str}")
+    for batch in _batches(unique_connectivities):
+        # GLOB with a trailing wildcard is rewritten by SQLite into a range scan on
+        # idx_cmpdstr_stdkey, unlike substr(), which would force a full table scan.
+        where_clause = " OR\n        ".join("cs.standard_inchi_key GLOB ?" for _ in batch)
+        query_str = _COMPOUND_LOOKUP_QUERY.format(where_clause=where_clause)
+        logger.debug(f"Generated SQL query for compound lookup:\n{query_str}")
+        frames.append(run_query(query_str, downloader_configs, params=[f"{value}*" for value in batch]))
 
-    result = query(
-        query_str,
-        version=downloader_configs["version"],
-        prefix=downloader_configs["prefix"],
-    )
-
+    result = pd.concat(frames, ignore_index=True).drop_duplicates(subset="molregno")
     if result.empty:
         logger.warning(
-            f"No compounds found for {len(inchi_keys or [])} InChI key(s) and "
-            f"{len(connectivities or [])} connectivity value(s)."
+            f"No compounds found for {len(unique_keys)} InChIKey(s) and "
+            f"{len(unique_connectivities)} connectivity value(s)."
         )
-
     return result
 
 
@@ -348,38 +603,22 @@ def get_compounds_by_molregno_sql(
     prefix: Optional[Sequence[str]] = None,
     version: Optional[Union[int, str]] = None,
 ) -> pd.DataFrame:
-    """Look up compounds by molregno, the internal ChEMBL identifier.
-
-    Used to resolve fingerprint search hits, since the ChEMBL fingerprint index is keyed by
-    molregno rather than by ChEMBL ID.
-
-    Args:
-        molregnos: molregno values to look up.
-        prefix: Optional prefix for an alternative data directory.
-        version: Optional ChEMBL version to use.
-
-    Returns:
-        pd.DataFrame: molecule_chembl_id, molregno, canonical_smiles, standard_inchi_key and the
-        parent compound from ``molecule_hierarchy``. Empty if nothing matched.
-    """
+    """Look up compounds by the internal ChEMBL ``molregno`` identifier."""
     if len(molregnos) == 0:
         raise ValueError("No molregnos provided")
 
+    unique_molregnos = sorted({int(molregno) for molregno in molregnos})
     downloader_configs = check_and_download_chembl_db(prefix=prefix, version=version)
+    frames = []
+    for batch in _batches(unique_molregnos):
+        placeholders = ", ".join("?" for _ in batch)
+        query_str = _COMPOUND_LOOKUP_QUERY.format(where_clause=f"cs.molregno IN ({placeholders})")
+        logger.debug(f"Generated SQL query for molregno lookup:\n{query_str}")
+        frames.append(run_query(query_str, downloader_configs, params=batch))
 
-    placeholders = ", ".join([str(int(molregno)) for molregno in sorted(set(molregnos))])
-    query_str = _COMPOUND_LOOKUP_QUERY.format(where_clause=f"cs.molregno IN ({placeholders})")
-    logger.debug(f"Generated SQL query for molregno lookup:\n{query_str}")
-
-    result = query(
-        query_str,
-        version=downloader_configs["version"],
-        prefix=downloader_configs["prefix"],
-    )
-
+    result = pd.concat(frames, ignore_index=True).drop_duplicates(subset="molregno")
     if result.empty:
-        logger.warning(f"No compounds found for {len(molregnos)} molregno value(s).")
-
+        logger.warning(f"No compounds found for {len(unique_molregnos)} molregno value(s).")
     return result
 
 
@@ -453,11 +692,7 @@ def get_assay_table_sql(
 
     logger.debug(f"Generated SQL query for assays:\n{query_str}")
 
-    result = query(
-        query_str,
-        version=downloader_configs["version"],
-        prefix=downloader_configs["prefix"],
-    )
+    result = run_query(query_str, downloader_configs)
 
     if result.empty:
         activity_kwargs = {
@@ -566,6 +801,7 @@ def get_activity_table_sql(
             td.chembl_id AS target_chembl_id,
             td.organism AS target_organism,
             act.data_validity_comment,
+            act.activity_comment,
             act.potential_duplicate,
             d.chembl_id AS document_chembl_id
         FROM activities act
@@ -581,11 +817,7 @@ def get_activity_table_sql(
 
     logger.debug(f"Generated SQL query for activities:\n{query_str}")
 
-    result = query(
-        query_str,
-        version=downloader_configs["version"],
-        prefix=downloader_configs["prefix"],
-    )
+    result = run_query(query_str, downloader_configs)
 
     # Create parameters dictionary for error reporting
     activity_kwargs = {}
@@ -695,7 +927,18 @@ def get_full_activity_data_sql(
         placeholders = ", ".join([f"'{atype}'" for atype in assay_types])
         where_conditions_main.append(f"a.assay_type IN ({placeholders})")
 
+    # docs.chembl_release_id was introduced in ChEMBL 33; earlier releases (e.g. the
+    # ChEMBL 32 that Landrum and Riniker used) lack the column, so selecting it errors.
+    records_release = int(str(downloader_configs["version"])) >= 33
+
     if chembl_release:
+        if not records_release:
+            raise ValueError(
+                f"ChEMBL {downloader_configs['version']} does not record which release a "
+                "document came from (docs.chembl_release_id was introduced in ChEMBL 33), so "
+                "chembl_release cannot be applied. Drop the release filter, or query ChEMBL 33 "
+                "or newer."
+            )
         where_conditions_main.append(
             f"(d.chembl_release_id IS NULL OR d.chembl_release_id <= {chembl_release})"
         )
@@ -734,6 +977,7 @@ def get_full_activity_data_sql(
         "cs.canonical_smiles",
         "cs.standard_inchi_key",
         "act.data_validity_comment AS data_validity_comment",
+        "act.activity_comment",
         "act.potential_duplicate",
         "d.chembl_id AS document_chembl_id",
         "d.doc_type",
@@ -745,7 +989,8 @@ def get_full_activity_data_sql(
         "d.title",
         "a.variant_id",
         "vs.mutation",
-        "d.chembl_release_id AS chembl_release",
+        # NULL keeps the chembl_release column that downstream aggregation requires.
+        "d.chembl_release_id AS chembl_release" if records_release else "NULL AS chembl_release",
     ]
     all_fields = base_fields + (additional_fields if additional_fields else [])
 
@@ -778,11 +1023,9 @@ def get_full_activity_data_sql(
 
     logger.debug(f"Generated SQL query:\n{query_str}")
 
-    return query(
-        query_str,
-        version=downloader_configs["version"],
-        prefix=downloader_configs["prefix"],
-    ).assign(mutation=lambda x: x["mutation"].fillna("WT"))
+    return run_query(query_str, downloader_configs).assign(
+        mutation=lambda x: x["mutation"].fillna("WT")
+    )
 
 
 def get_target_names_sql(
@@ -819,11 +1062,7 @@ def get_target_names_sql(
 
     logger.debug(f"Generated SQL query for target names:\n{query_str}")
 
-    result = query(
-        query_str,
-        version=downloader_configs["version"],
-        prefix=downloader_configs["prefix"],
-    )
+    result = run_query(query_str, downloader_configs)
 
     if result.empty:
         logger.warning(f"No targets found for IDs: {target_chembl_ids}")
@@ -867,8 +1106,4 @@ def get_assay_size_sql(
 
     logger.debug(f"Generated SQL query for assay size:\n{query_str}")
 
-    return query(
-        query_str,
-        version=downloader_configs["version"],
-        prefix=downloader_configs["prefix"],
-    )
+    return run_query(query_str, downloader_configs)

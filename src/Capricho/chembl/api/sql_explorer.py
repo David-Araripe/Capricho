@@ -3,12 +3,11 @@
 from pathlib import Path
 from typing import Optional
 
-import chembl_downloader
 import pandas as pd
 
 from ...core.pandas_helper import save_dataframe
 from ...core.table_format import format_dataframe
-from .downloader import check_and_download_chembl_db
+from .downloader import check_and_download_chembl_db, connect_chembl
 
 
 def get_tables(conn):
@@ -166,7 +165,7 @@ def explorer_main(
     """
     primary_df = None
     configs = check_and_download_chembl_db(version=version)
-    with chembl_downloader.connect(version=configs["version"], prefix=configs["prefix"]) as conn:
+    with connect_chembl(configs) as conn:
         if list_tables:
             tables_df = list_all_tables(conn)
             primary_df = tables_df

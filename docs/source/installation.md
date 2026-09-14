@@ -2,18 +2,34 @@
 
 CAPRICHO requires Python 3.10 or later.
 
-## From PyPI (Recommended)
+## With pip
 
-Install the latest stable version from PyPI using pip:
+Install into the environment you work in, be it a conda/mamba environment or a
+virtual environment:
 
 ```bash
-pip install capricho
+python -m pip install capricho
 ```
 
-Or using uv (faster):
+The `capricho` command comes with it, and is available whenever that environment
+is active.
+
+## With uv
+
+[uv](https://docs.astral.sh/uv/) does not install into an activated environment
+by default, so `uv pip install` alone can leave `capricho` off your `PATH` (see
+uv's [guide to environments](https://docs.astral.sh/uv/pip/environments/)).
+Install it as a standalone command instead, available anywhere:
 
 ```bash
-uv pip install capricho
+uv tool install capricho
+```
+
+or add it to a project, where it is importable as a library too and runs as
+`uv run capricho`:
+
+```bash
+uv add capricho
 ```
 
 ## Similarity Search (Optional)
@@ -34,16 +50,11 @@ Python 3.11 and later get the current release.
 
 ## From GitHub (Development Version)
 
-To install the latest development version directly from GitHub:
+Swap `capricho` for the repository URL in any of the commands above:
 
 ```bash
-pip install git+https://github.com/David-Araripe/Capricho.git
-```
-
-Or with uv:
-
-```bash
-uv pip install git+https://github.com/David-Araripe/Capricho.git
+python -m pip install git+https://github.com/David-Araripe/Capricho.git
+uv tool install git+https://github.com/David-Araripe/Capricho.git
 ```
 
 ## Development Installation

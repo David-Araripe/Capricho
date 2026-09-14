@@ -123,7 +123,13 @@ def process_repeat_mols(
     repeat_subset = df.query("~repeat_mapping.isna()").assign(
         **{value_col: lambda df, vc=value_col: df[vc].apply(lambda val: format_value(val))}
     )
-    if not repeat_subset.empty:
+    if repeat_subset.empty:
+        logger.info(
+            "Multiple readouts on the same compound not found within the dataset. Statistics "
+            "columns (counts, mean, median) will be calculated solely for the sake of consistency."
+        )
+        activity_divergence_series = pd.Series(dtype=float)
+    else:
         numeric_activity = (
             # concatenate grouped values and convert to numeric arrays
             repeat_subset.groupby(["repeat_mapping"])[value_col]
@@ -131,26 +137,16 @@ def process_repeat_mols(
             .str.split("|")
             .apply(lambda x: np.array(x).astype(float))
         )
-    else:
-        logger.info(
-            "Multiple readouts on the same compound not found within the dataset. Statistics "
-            "columns (counts, mean, median) will be calculated solely for the sake of consistency."
-        )
-        numeric_activity = (
-            repeat_subset.groupby(["repeat_mapping"])[value_col]
-            .apply(lambda x: "|".join(x))
-            .apply(lambda x: np.array(x).astype(float))
-        )
-
-    max_series = numeric_activity.apply(lambda x: np.max(x))
-    min_series = numeric_activity.apply(lambda x: np.min(x))
-    activity_divergence_series = max_series - min_series
+        max_series = numeric_activity.apply(lambda x: np.max(x))
+        min_series = numeric_activity.apply(lambda x: np.min(x))
+        activity_divergence_series = max_series - min_series
 
     # Will drop the repeats with more than 1 log unit difference
     high_diff_repeats = np.where(activity_divergence_series >= 1)[0]
     points_dropped = len(repeat_subset["repeat_mapping"].isin(high_diff_repeats))
     logger.info(f"Found {len(high_diff_repeats)} repeats with more than 1 log unit difference.")
-    logger.info(f"Maximum difference between min & max values: {np.max(activity_divergence_series)}")
+    if not activity_divergence_series.empty:
+        logger.info(f"Maximum difference between min & max values: {activity_divergence_series.max()}")
     if solve_strat == "drop":
         logger.info(f"{points_dropped} points will be removed from the dataset")
 
@@ -178,7 +174,8 @@ def process_repeat_mols(
         multival_cols = [*multival_cols, "mutation"]
     else:
         id_cols = [*id_cols, "mutation"]
-    repeat_subset.loc[:, multival_cols].replace({None: "None"}, inplace=True)
+    multival_data = repeat_subset[multival_cols].astype(object)
+    repeat_subset[multival_cols] = multival_data.where(multival_data.notna(), np.nan)
 
     if pd.__version__ >= "1.5.0":
         grouped = repeat_subset.groupby(id_cols, group_keys=True)
@@ -215,21 +212,28 @@ def process_repeat_mols(
         if col in non_aggregated_df.columns and col != value_col:
             non_aggregated_df[col] = non_aggregated_df[col].apply(format_value)
 
-    df = pd.concat(
-        [
-            non_aggregated_df,
-            updated_df.assign(might_rancemic=lambda x: [True if not chirality else False] * len(x)),
-        ],
-        ignore_index=True,
-    )
+    stats_cols = [f"{value_col}{suffix}" for suffix in ["_mean", "_std", "_median", "_counts"]]
+    aggregated_df = updated_df.assign(might_rancemic=lambda x: [True if not chirality else False] * len(x))
+    if updated_df.empty:
+        single_values = pd.to_numeric(non_aggregated_df[value_col], errors="coerce")
+        non_aggregated_df[stats_cols[0]] = single_values
+        non_aggregated_df[stats_cols[1]] = np.nan
+        non_aggregated_df[stats_cols[2]] = single_values
+        non_aggregated_df[stats_cols[3]] = 1
+        df = non_aggregated_df.reset_index(drop=True)
+    elif non_aggregated_df.empty:
+        df = aggregated_df.reset_index(drop=True)
+    else:
+        df = pd.concat([non_aggregated_df, aggregated_df], ignore_index=True)
     # the `smiles` column will be the final smiles column; to be used for modeling
     smiles = df["standard_smiles"].apply(
         lambda smi: smi if pd.isna(smi) or "|" not in smi else smi.split("|")[0]
     )
     logger.info("Canonicalizing smiles...")
-    df = df.assign(smiles=smiles_canonizer(smiles))
+    unique_smiles = smiles.drop_duplicates().tolist()
+    canonical_by_smiles = dict(zip(unique_smiles, smiles_canonizer(unique_smiles)))
+    df = df.assign(smiles=smiles.map(canonical_by_smiles))
 
-    stats_cols = [f"{value_col}{suffix}" for suffix in ["_mean", "_std", "_median", "_counts"]]
     final_cols = [*id_cols, "smiles", *multival_cols, "might_rancemic", *stats_cols]
     final_cols.pop(final_cols.index("repeat_mapping"))  # remove repeat_mapping from final_cols
     df = (
@@ -239,10 +243,13 @@ def process_repeat_mols(
         .drop_duplicates()
     )
     logger.info(f"Final number of points: {len(df)}")
-    # Also add the single-read points to the mean / median / counts values
-    with pd.option_context("future.no_silent_downcasting", True):
-        df[f"{value_col}_median"] = df[f"{value_col}_median"].fillna(df[value_col]).infer_objects(copy=False)
-        df[f"{value_col}_mean"] = df[f"{value_col}_mean"].fillna(df[value_col]).infer_objects(copy=False)
-        df[f"{value_col}_counts"] = df[f"{value_col}_counts"].fillna(1).infer_objects(copy=False)
+    # Also add the single-read points to the mean / median / counts values.
+    # Convert explicitly instead of relying on pandas' version-dependent silent downcasting.
+    fallback_values = pd.to_numeric(df[value_col], errors="coerce")
+    for suffix in ("median", "mean"):
+        column = f"{value_col}_{suffix}"
+        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(fallback_values)
+    counts_column = f"{value_col}_counts"
+    df[counts_column] = pd.to_numeric(df[counts_column], errors="coerce").fillna(1).astype("int64")
     df[value_col] = df[value_col].apply(format_value)  # convert to str for consistency
     return df

@@ -9,8 +9,13 @@ locally downloaded ChEMBL database and is skipped when one is not available.
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+import numpy as np
+import pandas as pd
 
 from Capricho.chembl.api.downloader import (
+    COMPOUND_HIT_COLUMNS,
     get_compounds_by_inchikey_sql,
     get_compounds_by_molregno_sql,
 )
@@ -82,8 +87,8 @@ class TestQueryPreparation(unittest.TestCase):
             [ASPIRIN, "this-is-not-a-smiles"], standardize=True, chirality=True, n_jobs=1
         )
         self.assertEqual(len(queries), 2)
-        self.assertIsNone(queries.loc[1, "query_inchikey"])
-        self.assertIsNone(queries.loc[1, "connectivity"])
+        self.assertTrue(pd.isna(queries.loc[1, "query_inchikey"]))
+        self.assertTrue(pd.isna(queries.loc[1, "connectivity"]))
 
 
 class TestLookupValidation(unittest.TestCase):
@@ -98,18 +103,64 @@ class TestLookupValidation(unittest.TestCase):
             with self.subTest(connectivity=bad), self.assertRaises(ValueError):
                 get_compounds_by_inchikey_sql(connectivities=[bad])
 
+    def test_malformed_inchikey_is_rejected(self):
+        for bad in ["TOOSHORT", "BSYNRYMUTXBXSQ", "BSYNRYMUTXBXSQ-UHFFFAOYSA-*", "' OR 1=1 --"]:
+            with self.subTest(inchikey=bad), self.assertRaises(ValueError):
+                get_compounds_by_inchikey_sql(inchi_keys=[bad])
+
     def test_molregno_lookup_requires_a_query(self):
         with self.assertRaises(ValueError):
             get_compounds_by_molregno_sql([])
 
     def test_similarity_rejects_out_of_range_threshold(self):
-        for bad in [-0.1, 1.5]:
+        for bad in [-0.1, 0, 1.5]:
             with self.subTest(threshold=bad), self.assertRaises(ValueError):
                 search_by_similarity(ASPIRIN, threshold=bad)
 
-    def test_similarity_rejects_non_positive_top_k(self):
-        with self.assertRaises(ValueError):
-            search_by_similarity(ASPIRIN, top_k=0)
+    def test_similarity_rejects_invalid_top_k(self):
+        for bad in [0, 1.5, True]:
+            with self.subTest(top_k=bad), self.assertRaises(ValueError):
+                search_by_similarity(ASPIRIN, top_k=bad)
+
+    def test_similarity_rejects_invalid_worker_count(self):
+        for bad in [0, -1, 1.5, True]:
+            with self.subTest(n_workers=bad), self.assertRaises(ValueError):
+                search_by_similarity(ASPIRIN, n_workers=bad)
+
+    def test_empty_similarity_query_does_not_load_the_index(self):
+        with patch("Capricho.chembl.similarity.load_fingerprint_index") as load_index:
+            result = search_by_similarity([])
+        load_index.assert_not_called()
+        self.assertTrue(result.empty)
+        self.assertIn("molecule_chembl_id", result.columns)
+
+    def test_invalid_similarity_query_does_not_load_the_index(self):
+        for query in ["this-is-not-a-smiles", "", "   "]:
+            with (
+                self.subTest(query=query),
+                patch("Capricho.chembl.similarity.load_fingerprint_index") as load_index,
+            ):
+                result = search_by_similarity(query)
+            load_index.assert_not_called()
+            self.assertEqual(result["query_smiles"].tolist(), [query])
+            self.assertTrue(result["molecule_chembl_id"].isna().all())
+
+    def test_empty_structure_query_does_not_access_the_database(self):
+        with patch("Capricho.chembl.similarity.get_compounds_by_inchikey_sql") as lookup:
+            result = search_by_structure([])
+        lookup.assert_not_called()
+        self.assertTrue(result.empty)
+        self.assertIn("match_type", result.columns)
+
+    def test_large_molregno_lookups_are_batched(self):
+        empty = pd.DataFrame(columns=COMPOUND_HIT_COLUMNS)
+        with (
+            patch("Capricho.chembl.api.downloader.check_and_download_chembl_db", return_value={}),
+            patch("Capricho.chembl.api.downloader.run_query", return_value=empty) as run_query,
+        ):
+            result = get_compounds_by_molregno_sql(range(1001))
+        self.assertEqual(run_query.call_count, 3)
+        self.assertTrue(result.empty)
 
     def test_structure_search_short_circuits_when_no_query_resolves(self):
         """With nothing to look up the database is never touched, but rows are still returned."""
@@ -117,6 +168,88 @@ class TestLookupValidation(unittest.TestCase):
         self.assertEqual(hits["match_type"].tolist(), ["no_match", "no_match"])
         self.assertIn("molecule_chembl_id", hits.columns)
         self.assertTrue(hits["molecule_chembl_id"].isna().all())
+
+
+class TestSimilarityResultAssembly(unittest.TestCase):
+    """Result assembly preserves one result set per input query occurrence."""
+
+    @staticmethod
+    def _engine(found=None, error=None):
+        engine = Mock()
+        if error is not None:
+            engine.similarity.side_effect = error
+        else:
+            engine.similarity.return_value = (
+                found
+                if found is not None
+                else np.array([(1, 0.9)], dtype=[("mol_id", "<i8"), ("coeff", "<f8")])
+            )
+        return engine
+
+    @staticmethod
+    def _compounds():
+        return pd.DataFrame(
+            [
+                {
+                    "molecule_chembl_id": "CHEMBL1",
+                    "molregno": 1,
+                    "canonical_smiles": "C",
+                    "standard_inchi_key": "VNWKTOKETHGBQD-UHFFFAOYSA-N",
+                    "parent_chembl_id": "CHEMBL1",
+                    "parent_smiles": "C",
+                }
+            ]
+        )
+
+    def test_duplicate_queries_do_not_multiply_hits(self):
+        engine = self._engine()
+        with (
+            patch("Capricho.chembl.similarity.load_fingerprint_index", return_value=engine),
+            patch(
+                "Capricho.chembl.similarity.get_compounds_by_molregno_sql",
+                return_value=self._compounds(),
+            ),
+        ):
+            result = search_by_similarity(["CC", "CC"])
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result["query_smiles"].tolist(), ["CC", "CC"])
+
+    def test_query_order_is_preserved(self):
+        engine = self._engine()
+        with (
+            patch("Capricho.chembl.similarity.load_fingerprint_index", return_value=engine),
+            patch(
+                "Capricho.chembl.similarity.get_compounds_by_molregno_sql",
+                return_value=self._compounds(),
+            ),
+        ):
+            result = search_by_similarity(["N", "C"])
+
+        self.assertEqual(result["query_smiles"].tolist(), ["N", "C"])
+
+    def test_operational_search_errors_are_not_reported_as_no_match(self):
+        engine = self._engine(error=OSError("index read failed"))
+        with (
+            patch("Capricho.chembl.similarity.load_fingerprint_index", return_value=engine),
+            self.assertRaisesRegex(OSError, "index read failed"),
+        ):
+            search_by_similarity(ASPIRIN)
+
+
+class TestFingerprintIndexLoading(unittest.TestCase):
+    """Optional dependency checks happen before any large download."""
+
+    def test_missing_fpsim2_fails_before_checking_downloads(self):
+        from Capricho.chembl.api import fingerprint_index
+
+        with (
+            patch.object(fingerprint_index, "_require_fpsim2", side_effect=ImportError("install FPSim2")),
+            patch.object(fingerprint_index, "check_and_download_fingerprint_index") as download,
+            self.assertRaisesRegex(ImportError, "install FPSim2"),
+        ):
+            fingerprint_index.load_fingerprint_index()
+        download.assert_not_called()
 
 
 @unittest.skipUnless(HAS_FPSIM2, "FPSim2 is not installed")
@@ -175,6 +308,48 @@ class TestFingerprintIndexContract(unittest.TestCase):
         results = self.engine.top_k(ASPIRIN, k=2, threshold=0.1, n_workers=1)
         self.assertEqual(len(results), 2)
 
+    @staticmethod
+    def _metadata(molregnos, **kwargs):
+        return pd.DataFrame(
+            [
+                {
+                    "molecule_chembl_id": f"CHEMBL{molregno}",
+                    "molregno": molregno,
+                    "canonical_smiles": None,
+                    "standard_inchi_key": None,
+                    "parent_chembl_id": None,
+                    "parent_smiles": None,
+                }
+                for molregno in molregnos
+            ]
+        )
+
+    def test_capricho_wrapper_uses_the_real_in_memory_engine(self):
+        with (
+            patch("Capricho.chembl.similarity.load_fingerprint_index", return_value=self.engine),
+            patch("Capricho.chembl.similarity.get_compounds_by_molregno_sql", side_effect=self._metadata),
+        ):
+            hits = search_by_similarity(ASPIRIN, threshold=0.1, top_k=2)
+
+        self.assertEqual(len(hits), 2)
+        self.assertEqual(hits.iloc[0]["molregno"], 1)
+        self.assertAlmostEqual(hits.iloc[0]["similarity"], 1.0, places=5)
+
+    def test_capricho_wrapper_supports_on_disk_searches(self):
+        from FPSim2 import FPSim2Engine
+
+        engine = FPSim2Engine(self.index_path, in_memory_fps=False)
+        with (
+            patch("Capricho.chembl.similarity.load_fingerprint_index", return_value=engine),
+            patch("Capricho.chembl.similarity.get_compounds_by_molregno_sql", side_effect=self._metadata),
+        ):
+            all_hits = search_by_similarity(ASPIRIN, threshold=0.6, in_memory=False)
+            top_hits = search_by_similarity(ASPIRIN, threshold=0.1, top_k=2, in_memory=False)
+
+        self.assertIn(1, all_hits["molregno"].tolist())
+        self.assertEqual(len(top_hits), 2)
+        self.assertEqual(top_hits.iloc[0]["molregno"], 1)
+
 
 @unittest.skipUnless(HAS_CHEMBL_DB, "No ChEMBL database has been downloaded locally")
 class TestStructureSearchAgainstChembl(unittest.TestCase):
@@ -208,6 +383,11 @@ class TestStructureSearchAgainstChembl(unittest.TestCase):
         hits = search_by_structure(queries, version=LOCAL_CHEMBL_VERSION)
         self.assertEqual(set(hits["query_smiles"]), set(queries))
 
+    def test_query_order_is_preserved(self):
+        queries = [IBUPROFEN, ASPIRIN]
+        hits = search_by_structure(queries, version=LOCAL_CHEMBL_VERSION)
+        self.assertEqual(hits["query_smiles"].drop_duplicates().tolist(), queries)
+
     def test_hits_report_their_parent_compound(self):
         hits = search_by_structure(ASPIRIN, version=LOCAL_CHEMBL_VERSION)
         exact = hits[hits["match_type"] == "exact"]
@@ -230,10 +410,7 @@ class TestSimilaritySearchAgainstChembl(unittest.TestCase):
             check_and_download_fingerprint_index,
         )
 
-        try:
-            check_and_download_fingerprint_index(version=LOCAL_CHEMBL_VERSION)
-        except Exception as exc:  # network or a release without a published index
-            raise unittest.SkipTest(f"Fingerprint index unavailable: {exc}")
+        check_and_download_fingerprint_index(version=LOCAL_CHEMBL_VERSION)
 
     def test_query_finds_itself_at_perfect_similarity(self):
         hits = search_by_similarity(ASPIRIN, threshold=0.9, version=LOCAL_CHEMBL_VERSION)

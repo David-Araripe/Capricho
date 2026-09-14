@@ -268,6 +268,7 @@ def get_activity_table(
         "target_chembl_id",
         "target_organism",
         "data_validity_comment",
+        "activity_comment",
         "potential_duplicate",
     )
     if bioactivities:

@@ -170,10 +170,97 @@ class TestFilterDroppingFlags(unittest.TestCase):
 
 
 class TestSmilesUtils(unittest.TestCase):
-    def test_clean_mixtures(self):
-        self.assertEqual(smiles_utils.clean_mixtures("CC.Cl"), "CC")
-        self.assertEqual(smiles_utils.clean_mixtures("CC.Na+"), "CC")
-        self.assertEqual(smiles_utils.clean_mixtures("CC.O"), "CC")
+    # Canonical (RDKit) SMILES of real drug parents. These are the standardized
+    # structures that survive salt/solvent removal; each is used below combined
+    # with a real (or, where noted, closest-analog) counter-ion / solvent.
+    DICLOFENAC = "O=C(O)Cc1ccccc1Nc1c(Cl)cccc1Cl"  # CHEMBL139
+    DIPHENHYDRAMINE = "CN(C)CCOC(c1ccccc1)c1ccccc1"  # CHEMBL657
+    NAPROXEN = "COc1ccc2cc(C(C)C(=O)O)ccc2c1"  # CHEMBL154
+    LOSARTAN = "CCCCc1nc(Cl)c(CO)n1Cc1ccc(-c2ccccc2-c2nnn[nH]2)cc1"  # CHEMBL226
+    RIZATRIPTAN = "CN(C)CCc1c[nH]c2ccc(Cn3ccnc3)cc12"  # CHEMBL1657
+    ATORVASTATIN = "CC(C)c1c(C(=O)Nc2ccccc2)c(-c2ccccc2)c(-c2ccc(F)cc2)n1CCC(O)CC(O)CC(=O)O"  # CHEMBL1487
+    ESOMEPRAZOLE = "COc1ccc2[nH]c(S(=O)Cc3ncc(C)c(OC)c3C)nc2c1"  # CHEMBL1200983
+    DEXTROMETHORPHAN = "COc1ccc2c(c1)CCN(C)C1Cc3ccc(OC)cc3C21"  # CHEMBL52440
+    PARACETAMOL = "CC(=O)Nc1ccc(O)cc1"  # CHEMBL112
+    NEOSTIGMINE = "CN(C)C(=O)Oc1cccc([N+](C)(C)C)c1"  # CHEMBL54126 (quaternary cation)
+    UNDECYLENATE = "C=CCCCCCCCCC(=O)[O-]"  # undecylenic acid anion (zinc undecylenate)
+    TETRAETHYLAMMONIUM = "CC[N+](CC)(CC)CC"  # CHEMBL86407 (quaternary cation)
+
+    def test_clean_mixtures_strips_every_salt_and_solvent(self):
+        """Every salt/solvent branch of MIXTURE_REGEX is removed, leaving the parent.
+
+        Each input is a real drug parent joined with the counter-ion/solvent as the
+        regex targets it. ``description`` names the salt list entry and the real
+        example (or the closest analog used when no real ChEMBL salt exists).
+        clean_mixtures is a string function that runs AFTER chembl_structure_pipeline
+        standardization, so inputs use the standardized/canonical fragment spellings.
+        """
+        cases = [
+            # --- monovalent metal cations, bracketed canonical form (as ChEMBL deposits them) ---
+            (self.NAPROXEN + ".[Na+]", self.NAPROXEN, "Na+ | naproxen sodium (CHEMBL1697742)"),
+            (self.LOSARTAN + ".[K+]", self.LOSARTAN, "K+ | losartan potassium (CHEMBL1237)"),
+            (self.RIZATRIPTAN + ".[Li+]", self.RIZATRIPTAN, "Li+ | closest analog: rizatriptan lithium carboxylate salt"),
+            # --- bare (non-bracketed) cation tokens the regex also anchors ---
+            ("CC(=O)[O-].Na+", "CC(=O)[O-]", "Na (bare token variant) | sodium acetate"),
+            # --- hydrohalide salts: ChEMBL stores the neutral acid fragment (Cl == HCl) ---
+            (self.DIPHENHYDRAMINE + ".Cl", self.DIPHENHYDRAMINE, "Cl- (as HCl) | diphenhydramine hydrochloride (CHEMBL1200662)"),
+            (self.DIPHENHYDRAMINE + ".[Cl-]", self.DIPHENHYDRAMINE, "Cl- (bracketed chloride) | diphenhydramine HCl standardized"),
+            (self.DEXTROMETHORPHAN + ".Br", self.DEXTROMETHORPHAN, "Br- (as HBr) | dextromethorphan hydrobromide (CHEMBL1200736)"),
+            (self.NEOSTIGMINE + ".[Br-]", self.NEOSTIGMINE, "Br- (bracketed) | neostigmine bromide (CHEMBL1201231)"),
+            (self.PARACETAMOL + ".F", self.PARACETAMOL, "F- (bare token, as HF) | closest analog: fluoride of an organic base"),
+            (self.NEOSTIGMINE + ".I", self.NEOSTIGMINE, "I- (bare token, as HI) | quaternary ammonium iodide"),
+            (self.NEOSTIGMINE + ".[I-]", self.NEOSTIGMINE, "I- (bracketed) | neostigmine/quaternary iodide"),
+            # --- divalent metal cations. Regex only anchors the bare 'Xx++' spelling for
+            #     Ca/Mg (no bracketed branch exists), so those use that form; Zn also has a
+            #     bracketed branch matching ChEMBL's canonical [Zn+2]. ---
+            (self.ATORVASTATIN + ".[Ca+2]", self.ATORVASTATIN, "Ca2+ (canonical [Ca+2]) | atorvastatin calcium (CHEMBL1487)"),
+            (self.ESOMEPRAZOLE + ".[Mg+2]", self.ESOMEPRAZOLE, "Mg2+ (canonical [Mg+2]) | esomeprazole magnesium (CHEMBL1213492)"),
+            (self.UNDECYLENATE + ".[Zn+2]", self.UNDECYLENATE, "Zn2+ (bracketed [Zn+2]) | zinc undecylenate (CHEMBL1200967)"),
+            # --- hydroxide (quaternary ammonium hydroxide) ---
+            (self.TETRAETHYLAMMONIUM + ".OH-", self.TETRAETHYLAMMONIUM, "OH- | tetraethylammonium hydroxide (CHEMBL86407 cation)"),
+            # --- carboxylate counter-ions ---
+            (self.RIZATRIPTAN + ".O=C([O-])c1ccccc1", self.RIZATRIPTAN, "benzoate (canonical) | rizatriptan benzoate (CHEMBL1201090)"),
+            (self.PARACETAMOL + ".CCCC(=O)[O-]", self.PARACETAMOL, "butyrate | closest analog: butyrate salt of a base"),
+            (self.PARACETAMOL + ".CCCCC(=O)[O-]", self.PARACETAMOL, "pentanoate (valerate) | closest analog: valerate salt of a base"),
+            # --- inorganic / solvent / misc. residual fragments ---
+            (self.PARACETAMOL + ".[O-][Cl+3]([O-])([O-])[O-]", self.PARACETAMOL, "perchlorate | closest analog: perchlorate of an organic base"),
+            (self.PARACETAMOL + ".c1ccncc1", self.PARACETAMOL, "pyridine solvate (canonical)"),
+            (self.PARACETAMOL + ".CN(C)C=O", self.PARACETAMOL, "N,N-dimethylformamide solvate (canonical)"),
+            (self.PARACETAMOL + ".[N]=O", self.PARACETAMOL, "nitric oxide (canonical) | contrived, no realistic ChEMBL counter-ion example"),
+            (self.NEOSTIGMINE + ".c1ccc([B-](c2ccccc2)(c2ccccc2)c2ccccc2)cc1", self.NEOSTIGMINE, "tetraphenylborate | closest analog: quaternary ammonium tetraphenylborate"),
+            (self.PARACETAMOL + ".O", self.PARACETAMOL, "water (hydrate) | paracetamol hemihydrate"),
+            (self.PARACETAMOL + ".N", self.PARACETAMOL, "ammonia | ammonia adduct/solvate"),
+        ]
+        for input_smiles, expected_parent, description in cases:
+            with self.subTest(salt=description):
+                self.assertEqual(smiles_utils.clean_mixtures(input_smiles), expected_parent)
+
+    def test_clean_mixtures_returns_dot_when_all_fragments_are_salts(self):
+        """If every fragment matches the regex, clean_mixtures returns '.' (drop marker)."""
+        self.assertEqual(smiles_utils.clean_mixtures("[Na+].[Cl-]"), ".")  # inorganic sodium chloride
+        self.assertEqual(smiles_utils.clean_mixtures("O.[Na+]"), ".")  # water + sodium
+        self.assertEqual(smiles_utils.clean_mixtures("N.O"), ".")  # ammonia + water
+
+    def test_clean_mixtures_preserves_non_salt_fragments(self):
+        """Fragments not in the salt list are left untouched (negative controls).
+
+        clean_mixtures sorts and de-duplicates fragments via np.unique, so multi-fragment
+        outputs come back in alphabetical order.
+        """
+        # ethanol is a solvent NOT in the regex list -> the whole mixture is preserved
+        self.assertEqual(smiles_utils.clean_mixtures("CC.CCO"), "CC.CCO")
+        # ethylene glycol co-former is not listed -> preserved alongside the drug
+        self.assertEqual(
+            smiles_utils.clean_mixtures(self.PARACETAMOL + ".OCCO"),
+            "CC(=O)Nc1ccc(O)cc1.OCCO",
+        )
+        # a single-fragment molecule is returned unchanged
+        self.assertEqual(smiles_utils.clean_mixtures(self.DICLOFENAC), self.DICLOFENAC)
+        # a genuine two-drug combination has no salt fragment -> both kept (sorted)
+        self.assertEqual(
+            smiles_utils.clean_mixtures(self.NAPROXEN + "." + self.PARACETAMOL),
+            "CC(=O)Nc1ccc(O)cc1.COc1ccc2cc(C(C)C(=O)O)ccc2c1",
+        )
 
 
 class TestStatsMake(unittest.TestCase):

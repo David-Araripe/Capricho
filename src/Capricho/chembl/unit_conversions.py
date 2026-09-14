@@ -4,9 +4,27 @@ Provides unit conversion functions for ChEMBL bioactivity data standardization.
 Supports permeability, molar concentration, mass concentration, dose, and time units.
 """
 
+import numpy as np
 import pandas as pd
 
 from ..logger import logger
+
+# Metric-prefix step in log10 space: activities that differ by an exact integer multiple of this
+# (nM<->uM = 3, nM<->mM = 6, nM<->M = 9, ...) are the classic unit-conversion/annotation error.
+UNIT_ERROR_LOG_STEP = 3.0
+
+
+def is_unit_annotation_error_diff(abs_diff, tol: float = 1e-9):
+    """Boolean mask of pChEMBL differences that look like a unit-annotation error.
+
+    A difference that is an exact positive integer multiple of 3 log units corresponds to a
+    metric-prefix confusion (nM<->uM = 3, nM<->mM = 6, nM<->M = 9, ...), a frequent unit
+    conversion error in deposited data. Accepts a scalar or array-like of absolute differences
+    and returns a numpy boolean of the same shape.
+    """
+    abs_diff = np.abs(np.asarray(abs_diff, dtype=float))
+    nearest_multiple = np.round(abs_diff / UNIT_ERROR_LOG_STEP) * UNIT_ERROR_LOG_STEP
+    return (nearest_multiple > 0) & np.isclose(abs_diff, nearest_multiple, rtol=tol, atol=tol)
 
 
 def convert_permeability_units(

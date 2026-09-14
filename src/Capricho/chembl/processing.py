@@ -15,6 +15,7 @@ from .data_flag_functions import (
     flag_with_data_validity_comment,
 )
 from .exceptions import BioactivitiesNotFoundError
+from .unit_conversions import is_unit_annotation_error_diff
 
 
 def convert_to_log10(df: pd.DataFrame) -> pd.DataFrame:
@@ -70,10 +71,7 @@ def convert_to_log10(df: pd.DataFrame) -> pd.DataFrame:
     if convertible_df.shape[0] > 0:  # Calculate pChEMBL for convertible units
         convertible_df = convertible_df.pipe(flag_calculated_pchembl)
         convertible_df = convertible_df.assign(pchembl_value=lambda x: x.apply(compute_log, axis=1))
-        with pd.option_context("future.no_silent_downcasting", True):
-            pchembl_inf_or_nan = convertible_df.replace([np.inf, -np.inf], np.nan).query(
-                "pchembl_value.isna()"
-            )
+        pchembl_inf_or_nan = convertible_df.loc[~np.isfinite(convertible_df["pchembl_value"])]
         if not pchembl_inf_or_nan.empty:
             debug_cols = [
                 "target_chembl_id",
@@ -188,11 +186,9 @@ def curate_activity_pairs(
     # Calculate absolute difference in activity values
     valid_pairs["abs_diff"] = np.abs(valid_pairs[activity_col_L] - valid_pairs[activity_col_R])
 
-    # Check if the absolute difference is close to 3.0 and 6.0
-    # we use np.isclose to handle floating point precision issues (e.g.: 3.000000001)
-    error_in_exact_3 = np.isclose(valid_pairs["abs_diff"], 3.0, rtol=1e-9, atol=1e-9)
-    error_in_exact_6 = np.isclose(valid_pairs["abs_diff"], 6.0, rtol=1e-9, atol=1e-9)
-    problematic_pairs = valid_pairs[error_in_exact_3 | error_in_exact_6]
+    # Flag pairs whose difference is an exact multiple of 3 log units (3.0, 6.0, 9.0, ...),
+    # the signature of a metric-prefix unit-annotation error (e.g. nM reported as uM).
+    problematic_pairs = valid_pairs[is_unit_annotation_error_diff(valid_pairs["abs_diff"])]
 
     rows_to_flag_indices = set()
     if not problematic_pairs.empty:
@@ -206,7 +202,7 @@ def curate_activity_pairs(
                 f"Marking/flagging rows for molecule {row_pair[mol_id_col]} (indices: {row_pair[orig_idx_col_L]}, {row_pair[orig_idx_col_R]}), "
                 f"assays {row_pair[assay_col_L]} (value: {row_pair[activity_col_L]}) and "
                 f"{row_pair[assay_col_R]} (value: {row_pair[activity_col_R]}) "
-                f"due to activity value difference of 3.0 or 6.0."
+                f"due to activity value difference being an exact multiple of 3.0 log units."
             )
 
     if rows_to_flag_indices:
@@ -255,8 +251,11 @@ def process_bioactivities(
         pd.DataFrame: the processed bioactivities DataFrame.
     """
     bioactivities_df = bioactivities_df.astype({"standard_value": "float32", "pchembl_value": "float32"})
-    with pd.option_context("future.no_silent_downcasting", True):
-        bioactivities_df = bioactivities_df.replace({None: np.nan}).infer_objects(copy=False)
+    if int(pd.__version__.split(".", maxsplit=1)[0]) < 3:
+        with pd.option_context("future.no_silent_downcasting", True):
+            bioactivities_df = bioactivities_df.replace({None: np.nan}).infer_objects(copy=False)
+    else:
+        bioactivities_df = bioactivities_df.replace({None: np.nan}).infer_objects()
     bioactivities_df = (
         bioactivities_df.pipe(flag_with_data_validity_comment)
         # .query("data_validity_comment.isna()")

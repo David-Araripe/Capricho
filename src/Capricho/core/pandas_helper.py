@@ -9,7 +9,53 @@ import pandas as pd
 from scipy.stats import gmean, gstd, median_abs_deviation
 
 from ..logger import logger
-from .default_fields import DATA_DROPPING_COMMENT, DATA_PROCESSING_COMMENT
+from .default_fields import (
+    DATA_DROPPING_COMMENT,
+    DATA_PROCESSING_COMMENT,
+    SHARED_IDENTIFIER_GROUP,
+)
+
+
+def assign_shared_identifier_groups(
+    df: pd.DataFrame,
+    key_columns: tuple[str, ...] = ("connectivity", "target_chembl_id"),
+) -> pd.DataFrame:
+    """Label rows that share a simplified downstream identifier.
+
+    CAPRICHO may intentionally keep several aggregated rows for one connectivity and
+    target combination because mutation or user-supplied ID columns differ. Every member
+    of such a group receives the same deterministic integer label; singleton rows remain
+    missing. Calling ``value_counts()`` on the resulting column therefore reports each
+    group's size.
+
+    Args:
+        df: Aggregated data to annotate.
+        key_columns: Columns defining the simplified downstream identifier.
+
+    Returns:
+        A copy with a nullable-integer ``shared_identifier_group`` column.
+    """
+    missing_columns = [column for column in key_columns if column not in df.columns]
+    if missing_columns:
+        raise ValueError(f"Missing shared identifier key columns: {missing_columns}")
+
+    result = df.copy()
+    shared_mask = result.duplicated(subset=list(key_columns), keep=False)
+    group_labels = pd.Series(pd.NA, index=result.index, dtype="Int64")
+    if shared_mask.any():
+        group_labels.loc[shared_mask] = (
+            result.loc[shared_mask]
+            .groupby(list(key_columns), sort=True, dropna=False)
+            .ngroup()
+            .add(1)
+            .astype("Int64")
+        )
+
+    if SHARED_IDENTIFIER_GROUP in result.columns:
+        result = result.drop(columns=SHARED_IDENTIFIER_GROUP)
+    insert_at = result.columns.get_loc("smiles") + 1 if "smiles" in result.columns else len(result.columns)
+    result.insert(insert_at, SHARED_IDENTIFIER_GROUP, group_labels)
+    return result
 
 
 def filter_dropping_flags(

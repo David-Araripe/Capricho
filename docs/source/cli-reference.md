@@ -16,6 +16,8 @@ capricho download [OPTIONS]
 |---|---|---|
 | `--version`, `-v` | ChEMBL version to download | latest |
 | `--prefix`, `-p` | Custom pystow storage path | `~/.data/chembl/` |
+| `--set-from-path` | Use a ChEMBL SQLite database already on the system instead of downloading | `None` |
+| `--unset-path` | Forget the database registered with `--set-from-path` | `False` |
 
 ### Examples
 
@@ -29,6 +31,38 @@ capricho download --version 33
 # Use custom storage location (this will install version 25 it on ~/.data/old-chembl)
 capricho download --version 25 --prefix old-chembl/
 ```
+
+### Using a database you already have
+
+If you keep your own ChEMBL SQLite dumps, point CAPRICHO at them instead of downloading a
+second copy. The database is read where it lies; nothing is moved or copied.
+
+```bash
+# Register a single release
+capricho download --set-from-path /data/chembl/chembl_35.db
+
+# Register every chembl_<version>.db found under a directory
+capricho download --set-from-path /data/chembl/
+
+# Register only one release out of a directory holding several
+capricho download --set-from-path /data/chembl/ --version 35
+
+# Go back to downloading that release
+capricho download --unset-path --version 35
+```
+
+The release is read from the `chembl_<version>.db` file name; pass `--version` explicitly when
+the file is named otherwise. Registration writes
+`~/.data/chembl/chembl_downloader_config_<version>.json`, which every later command honours, so
+`capricho get --chembl-version 35` and `capricho explore --version 35` read the registered file.
+
+Before registering, CAPRICHO checks that the file is a ChEMBL database and that the release it
+states for itself — every dump records this in its `version` table — is the release it is being
+registered under. Registering a ChEMBL 36 dump as ChEMBL 37, whether through a mistyped
+`--version` or a renamed file, is therefore refused rather than silently misreporting the
+provenance of every dataset drawn from it. A database that states no release is registered on
+the strength of its file name, with a warning. Each run reports the database it reads, and a
+registered database that is later moved or deleted fails with an actionable message.
 
 ## capricho explore
 
@@ -165,7 +199,7 @@ Control how data is processed and aggregated:
 | Option | Description | Default |
 |---|---|---|
 | `-calc`, `--calculate-pchembl` | Calculate pChEMBL values if not reported. **Required when using censored data** (`--standard-relation` includes `<` or `>`). See [Standard Relations](concepts.md). | `False` |
-| `-agg-on`, `--aggregate-on` | Column to aggregate statistics on. Use `standard_value` for non-pChEMBL data (e.g., ADMET assays with % inhibition). See [Non-pChEMBL Aggregation](non-pchembl-aggregation). | `pchembl_value` |
+| `-vcol`, `--value-column` | Column holding the experimental measurement to summarize (mean/median/std). Use `standard_value` for non-pChEMBL data (e.g., ADMET assays with % inhibition). See [Non-pChEMBL Aggregation](non-pchembl-aggregation). | `pchembl_value` |
 | `-conu`, `--convert-units` | Convert units to standard formats before aggregation. See [Unit Conversion](unit-conversion). | `False` |
 | `-chiral`, `--chirality` | Consider chirality during fingerprint calculation | `False` |
 | `-duchi`, `--drop-unassigned-chiral` | Drop entries with unassigned chiral centers | `False` |
@@ -174,15 +208,27 @@ Control how data is processed and aggregated:
 | `-smr`, `--strict-mutant-removal` | Flag assays with mutant-related keywords for removal | `False` |
 | `-cpd-eq`, `--compound-equality` | Method for compound equality determination | `connectivity` |
 | `-mcols`, `--metadata-columns` | Extra metadata columns to keep, comma-separated | `[]` |
-| `-idcols`, `--id-columns` | Extra ID columns for aggregation, comma-separated | `[]` |
+| `-idcols`, `--id-columns` | Additional columns to append to the aggregation key (compound + task), comma-separated. E.g. `assay_chembl_id` keeps measurements from different assays separate. | `[]` |
+
+#### Aggregated output diagnostics
+
+The aggregated output includes `shared_identifier_group`. Rows sharing the selected
+compound identifier and `target_chembl_id` receive the same label when they were kept
+separate by mutation, `--id-columns`, or another preserved readout field; all other rows
+contain `NaN`. The column is diagnostic metadata, not a source-data quality flag.
+`data.shared_identifier_group.value_counts()` reports each group's size. With the default
+compound-equality method the identifier is `connectivity`; the message and grouping use `inchi`,
+`inchikey`, or `smiles` when one of those methods is selected.
 
 #### Aggregation Column Options
 - **pchembl_value**: (Default) Aggregate on pChEMBL values (-log10 molar potency). Uses geometric mean.
 - **standard_value**: Aggregate on raw standard_value column. Uses arithmetic mean. Useful for ADMET data with non-molar units (%, permeability, etc.).
 
 #### Compound Equality Methods
-- **connectivity**: (Default) Based on molecular connectivity (InChI key first block), ignoring stereochemistry
-- **mixed_fp**: Uses ECFP4 and RDKit fingerprints (each with 2048 bits) for similarity determination
+- **connectivity**: (Default) Uses the first InChIKey block, ignoring stereochemistry
+- **inchi**: Uses the complete standard InChI, including specified stereochemistry
+- **inchikey**: Uses the complete 27-character InChIKey
+- **mixed_fp**: Uses ECFP4 and RDKit fingerprints (each with 2048 bits) for identity determination
 - **smiles**: Uses standardized SMILES strings directly for exact string matching
 
 #### Useful Metadata Columns
@@ -236,7 +282,7 @@ capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279,CHEMBL3529278 \
   --assay-types A \
   --confidence-scores 0,1,2,3,4,5,6,7,8,9 \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --convert-units \
   --id-columns standard_units,assay_cell_type \
   --drop-unassigned-chiral \
@@ -276,6 +322,7 @@ These flags remove entries with specific quality concerns. Each flag corresponds
 | `--drop-data-validity` | Drop entries with data validity comments from ChEMBL | `False` |
 | `--drop-unit-error` | Drop entries with unit annotation errors (3.0 or 6.0 log unit differences) | `False` |
 | `--drop-mixture` | Drop entries containing mixtures in SMILES | `False` |
+| `--drop-activity-comment` | Drop entries whose `activity_comment` reports inactivity while the source `standard_relation` is `=` | `False` |
 | `--drop-assay-size` | Drop entries outside assay size bounds (both too small and too large) | `False` |
 | `--drop-insufficient-overlap` | Drop entries from assays with insufficient compound overlap | `False` |
 | `--remove-flags` | Custom quality flags to remove, comma-separated. Rows with these flags in `data_dropping_comment` will be filtered out. | `None` |
@@ -294,10 +341,14 @@ These options control the optional multitask activity matrix output:
 | Option | Description | Default |
 |---|---|---|
 | `--task-col` | Column to use as task identifier | `target_chembl_id` |
-| `--compound-col` | Column for compound identity (`connectivity` or `smiles`) | `connectivity` |
+| `--compound-col` | Compound identifier column (`connectivity`, `inchi`, `inchikey`, or `smiles`) | `connectivity` |
 | `--smiles-col` | Column containing SMILES strings | `smiles` |
-| `-agg-on`, `--aggregate-on` | Column that was aggregated on during `capricho get`. Derives the value column as `{aggregate_on}_mean`. | `pchembl_value` |
-| `--id-columns` | Extra columns to combine with `task_col` for composite task identifiers. Use the same columns passed to `capricho get --id-columns` during aggregation. | `None` |
+| `-vcol`, `--value-column` | Column holding the experimental measurement, as passed to `capricho get --value-column`. Statistics are read from `{value_column}_mean`. | `pchembl_value` |
+| `--id-columns` | Additional columns to combine with `task_col` for composite task identifiers. Use the same columns passed to `capricho get --id-columns` during aggregation. | `None` |
+
+Use the compound identifier selected during aggregation when creating the matrix. For example,
+a dataset retrieved with `--compound-equality inchikey` should normally be prepared with
+`--compound-col inchikey`.
 
 ### Output Options
 
@@ -314,6 +365,7 @@ Quality flags are added to the `data_dropping_comment` column during `capricho g
 - **Data validity comment**: ChEMBL's own data quality annotations
 - **Unit annotation error**: Measurements differing by exactly 3.0 or 6.0 log units (suggesting unit conversion errors)
 - **Mixture in SMILES**: SMILES containing multiple components (`.` separator)
+- **Activity with exact standard relation and inactivity-like comment**: An inactivity-like `activity_comment` occurs with `standard_relation = '='`. CAPRICHO flags the combination for review while preserving the source comment, relation, and value.
 - **Assay size too small/large**: Assays outside the specified size bounds
 - **Insufficient assay overlap**: Assays without enough shared compounds for reliable comparison
 
@@ -477,18 +529,23 @@ Use `-rp` / `--conflict-report-path` to save a JSON report with:
 
 #### Compound Identifiers for Conflict Detection
 
-By default, conflicts are detected using the `connectivity` column (InChI key connectivity layer), which groups compounds by their molecular graph ignoring stereochemistry. You can use a different identifier:
+By default, conflicts are detected using the `connectivity` column, which groups compounds by
+their molecular graph while ignoring stereochemistry. You can instead select any compound
+identifier present in the aggregated output:
 
-- **`connectivity`** (default): Groups by connectivity layer, ignoring stereochemistry
-- **`smiles`**: Groups by standardized SMILES, which may be more or less permissive depending on your aggregation settings
+- **`connectivity`** (default): First InChIKey block; ignores stereochemistry
+- **`inchi`**: Complete standard InChI
+- **`inchikey`**: Complete 27-character InChIKey
+- **`smiles`**: Standardized SMILES
 
-To use SMILES for conflict detection, specify `-cid smiles`:
+For example, use full InChIKey identity with:
 
 ```bash
-capricho binarize -i data.csv -o output.csv -cid smiles
+capricho binarize -i data.csv -o output.csv -cid inchikey
 ```
 
-This allows you to check for inconsistencies at different levels of molecular identity (e.g., detecting conflicts between stereoisomers when using SMILES, or treating stereoisomers as the same compound when using connectivity).
+Use the same identity level chosen for aggregation unless you deliberately want to inspect
+conflicts at a broader or narrower level.
 
 ### Examples
 

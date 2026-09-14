@@ -52,7 +52,7 @@ DEFAULTS = {
     "min_assay_overlap": 0,
     "strict_mutant_removal": False,
     "compound_equality": "connectivity",
-    "aggregate_on": "pchembl_value",
+    "value_column": "pchembl_value",
 }
 
 DEFAULT_FALSE_ARGS = [
@@ -121,15 +121,19 @@ class ChemblBackend(str, Enum):
 class CompoundEquality(str, Enum):
     mixed_fp = "mixed_fp"
     connectivity = "connectivity"
+    inchi = "inchi"
+    inchikey = "inchikey"
     smiles = "smiles"
 
 
 class CompoundIdColumn(str, Enum):
     connectivity = "connectivity"
+    inchi = "inchi"
+    inchikey = "inchikey"
     smiles = "smiles"
 
 
-class AggregationColumn(str, Enum):
+class ValueColumn(str, Enum):
     pchembl_value = "pchembl_value"
     standard_value = "standard_value"
 
@@ -182,9 +186,52 @@ def download(
             help="Custom pystow storage path. Defaults to None, saving to ~/.data/chembl/.",
         ),
     ] = None,
+    set_from_path: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--set-from-path",
+            help=(
+                "Use a ChEMBL SQLite database you already have instead of downloading one. "
+                "Takes a chembl_<version>.db file or a directory holding one or more of them, "
+                "and registers every release found unless --version narrows it down."
+            ),
+        ),
+    ] = None,
+    unset_path: Annotated[
+        bool,
+        typer.Option(
+            "--unset-path",
+            help="Forget the database registered with --set-from-path for the given version.",
+        ),
+    ] = False,
 ):
-    """Download ChEMBL SQL database using chembl_downloader."""
-    from ..chembl.api.downloader import check_and_download_chembl_db
+    """Download ChEMBL SQL database using chembl_downloader.
+
+    Alternatively, point CAPRICHO at a database already on the system with --set-from-path;
+    every later command reads that file in place, with no download.
+    """
+    from ..chembl.api.downloader import (
+        check_and_download_chembl_db,
+        set_chembl_db_path,
+        unset_chembl_db_path,
+    )
+
+    if set_from_path is not None and unset_path:
+        raise typer.BadParameter("--set-from-path and --unset-path cannot be combined.")
+
+    if set_from_path is not None:
+        if prefix is not None:
+            raise typer.BadParameter(
+                "--prefix sets where CAPRICHO downloads to, so it does not apply to a database "
+                "registered with --set-from-path."
+            )
+        databases = set_chembl_db_path(set_from_path, version=version)
+        logger.info(f"Registered ChEMBL release(s): {', '.join(sorted(databases))}")
+        raise typer.Exit()
+
+    if unset_path:
+        unset_chembl_db_path(version=version)
+        raise typer.Exit()
 
     logger.info(f"Starting ChEMBL download command for version: {version or 'latest'}")
     check_and_download_chembl_db(prefix=prefix.split("/") if prefix else None, version=version)
@@ -381,17 +428,18 @@ def get_data(
         typer.Option(
             "-cpd-eq",
             "--compound-equality",
-            help="Method for compound equality determination. mixed_fp uses combined ECFP4 and RDKit fingerprints.",
+            help="Method used to identify equivalent compounds during aggregation.",
         ),
     ] = DEFAULTS["compound_equality"],
-    aggregate_on: Annotated[
-        AggregationColumn,
+    value_column: Annotated[
+        ValueColumn,
         typer.Option(
-            "-agg-on",
-            "--aggregate-on",
-            help="Column to aggregate statistics on. Use 'standard_value' for non-pChEMBL data (e.g., % inhibition).",
+            "-vcol",
+            "--value-column",
+            help="Column holding the experimental measurement to summarize (mean/median/std). "
+            "Use 'standard_value' for non-pChEMBL data (e.g., % inhibition).",
         ),
-    ] = DEFAULTS["aggregate_on"],
+    ] = DEFAULTS["value_column"],
     # --- Metadata & Aggregation ---
     metadata_columns: Annotated[
         str,
@@ -410,7 +458,8 @@ def get_data(
             "-idcols",
             "--id-columns",
             parser=csv_string,
-            help="Extra ID columns for aggregation, comma-separated. E.g.: 'assay_chembl_id'",
+            help="Additional columns to append to the aggregation key (compound + task), comma-separated. "
+            "E.g.: 'assay_chembl_id' keeps measurements from different assays separate.",
             show_default=False,
             metavar="col1,col2,...",
         ),
@@ -606,7 +655,7 @@ def get_data(
         max_assay_size=max_assay_size,
         min_assay_overlap=min_assay_overlap,
         strict_mutant_removal=strict_mutant_removal,
-        value_col=aggregate_on.value,
+        value_col=value_column.value,
         enable_unit_conversion=convert_units,
     )
     pre_agg_count = len(pre_agg_df)
@@ -619,10 +668,10 @@ def get_data(
         aggregate_mutants=aggregate_mutants,
         output_path=output_path,
         compound_equality=compound_equality.value,
-        value_col=aggregate_on.value,
+        value_col=value_column.value,
     )
 
-    _log_pipeline_summary(pre_agg_df, pre_aggregation_count=pre_agg_count, post_aggregation_count=len(df))
+    _log_pipeline_summary(pre_agg_df, aggregated_df=df, pre_aggregation_count=pre_agg_count)
 
     if not skip_recipe:
         output_name = output_path.stem.split(".")[0]
@@ -714,7 +763,7 @@ def binarize_data(
         typer.Option(
             "-cid",
             "--compound-id-col",
-            help="Column name for compound identifiers (connectivity or smiles).",
+            help="Column used as the compound identifier.",
         ),
     ] = CompoundIdColumn.connectivity,
     target_id_col: Annotated[
@@ -876,19 +925,20 @@ def prepare_data(
             metavar="str",
         ),
     ] = "target_chembl_id",
-    aggregate_on: Annotated[
-        AggregationColumn,
+    value_column: Annotated[
+        ValueColumn,
         typer.Option(
-            "-agg-on",
-            "--aggregate-on",
-            help="Column that was aggregated on during 'capricho get'. Derives the value column as '{aggregate_on}_mean'.",
+            "-vcol",
+            "--value-column",
+            help="Column holding the experimental measurement, as passed to 'capricho get --value-column'. "
+            "Statistics are read from '{value_column}_mean'.",
         ),
-    ] = AggregationColumn.pchembl_value,
+    ] = ValueColumn.pchembl_value,
     compound_col: Annotated[
         CompoundIdColumn,
         typer.Option(
             "--compound-col",
-            help="Column for compound identity (connectivity or smiles).",
+            help="Column used as the compound identifier.",
         ),
     ] = CompoundIdColumn.connectivity,
     smiles_col: Annotated[
@@ -913,7 +963,7 @@ def prepare_data(
         typer.Option(
             "--id-columns",
             parser=csv_string,
-            help="Extra columns to combine with task_col for composite task identifiers. "
+            help="Additional columns to combine with task_col for composite task identifiers. "
             "Use the same columns passed to 'capricho get --id-columns' during aggregation.",
             metavar="col1,col2,...",
         ),
@@ -956,6 +1006,15 @@ def prepare_data(
         typer.Option(
             "--drop-mixture/--keep-mixture",
             help="Drop entries containing mixtures in SMILES.",
+            is_flag=True,
+        ),
+    ] = False,
+    drop_activity_comment: Annotated[
+        bool,
+        typer.Option(
+            "--drop-activity-comment/--keep-activity-comment",
+            help="Drop entries whose activity_comment reports inactivity while the source "
+            "standard_relation is '='.",
             is_flag=True,
         ),
     ] = False,
@@ -1056,6 +1115,8 @@ def prepare_data(
         flags_to_remove.append(DroppingComment.UNIT_ANNOTATION_ERROR.value)
     if drop_mixture:
         flags_to_remove.append(DroppingComment.MIXTURE_IN_SMILES.value)
+    if drop_activity_comment:
+        flags_to_remove.append(DroppingComment.ACTIVITY_COMMENT_REVIEW.value)
     if drop_assay_size:
         flags_to_remove.append(DroppingComment.ASSAY_SIZE_TOO_SMALL.value)
         flags_to_remove.append(DroppingComment.ASSAY_SIZE_TOO_LARGE.value)
@@ -1063,8 +1124,7 @@ def prepare_data(
         flags_to_remove.append(DroppingComment.INSUFFICIENT_ASSAY_OVERLAP.value)
         flags_to_remove.append(DroppingComment.INSUFFICIENT_ASSAY_OVERLAP_WITH_METADATA.value)
 
-    # Derive value column from aggregate_on
-    value_col = aggregate_on.value
+    value_col = value_column.value
 
     # Clean data: deduplicate, resolve annotation errors, filter flags
     df = clean_data(
@@ -1073,10 +1133,11 @@ def prepare_data(
         value_col=value_col,
         resolve_annotation_error=resolve_annotation_error,
         drop_flags=flags_to_remove if flags_to_remove else None,
+        compound_col=compound_col.value,
     )
 
     # Use mean column for the activity matrix
-    value_col_mean = f"{aggregate_on.value}_mean"
+    value_col_mean = f"{value_column.value}_mean"
 
     activity_matrix = prepare_multitask_data(
         df=df,

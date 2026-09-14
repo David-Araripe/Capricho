@@ -2,6 +2,7 @@
 
 import unittest
 
+import numpy as np
 import pandas as pd
 
 from Capricho.analysis import (
@@ -954,6 +955,363 @@ class TestLogScaleTransformation(unittest.TestCase):
 
         import matplotlib.pyplot as plt
 
+        plt.close(fig)
+
+
+class TestFormatTitleWithN(unittest.TestCase):
+    """Tests for format_title_with_n function."""
+
+    def test_appends_pair_count(self):
+        """Test that the pairwise comparison count is appended to the title."""
+        from Capricho.analysis import format_title_with_n
+
+        self.assertEqual(format_title_with_n("Cleaned Ki Data", 383), "Cleaned Ki Data (n = 383 pairs)")
+
+    def test_thousands_separator(self):
+        """Test that large counts are formatted with a thousands separator."""
+        from Capricho.analysis import format_title_with_n
+
+        self.assertEqual(
+            format_title_with_n("pChEMBL Duplication Across Documents", 3360),
+            "pChEMBL Duplication Across Documents (n = 3,360 pairs)",
+        )
+
+    def test_single_pair_is_singular(self):
+        """Test that a single comparison uses the singular noun."""
+        from Capricho.analysis import format_title_with_n
+
+        self.assertEqual(format_title_with_n("Salt/solvent removed", 1), "Salt/solvent removed (n = 1 pair)")
+
+    def test_empty_title_reports_count_alone(self):
+        """Test that an empty title yields the count without stray whitespace."""
+        from Capricho.analysis import format_title_with_n
+
+        self.assertEqual(format_title_with_n("", 2), "n = 2 pairs")
+
+    def test_custom_separator_wraps_to_new_line(self):
+        """Test that a newline separator keeps long panel titles off their neighbours."""
+        from Capricho.analysis import format_title_with_n
+
+        self.assertEqual(
+            format_title_with_n("7. Insufficient assay overlap (min_overlap=5)", 6879, sep="\n"),
+            "7. Insufficient assay overlap (min_overlap=5)\n(n = 6,879 pairs)",
+        )
+
+    def test_zero_pairs(self):
+        """Test that an empty subset is reported as zero pairs."""
+        from Capricho.analysis import format_title_with_n
+
+        self.assertEqual(format_title_with_n("Empty Flag", 0), "Empty Flag (n = 0 pairs)")
+
+
+class TestFormatMetricsText(unittest.TestCase):
+    """Tests for format_metrics_text function."""
+
+    def test_all_metrics_defined(self):
+        """Test that defined metrics are rendered on separate lines."""
+        from Capricho.analysis import format_metrics_text
+
+        self.assertEqual(
+            format_metrics_text(0.78, 0.85, 0.72),
+            "$R^2: 0.78$\nSpearman $\\rho: 0.85$\nKendall $\\tau: 0.72$",
+        )
+
+    def test_undefined_metrics_are_omitted(self):
+        """Test that a panel with undefined correlations renders no annotation.
+
+        Two identical points have zero variance, so every metric is nan; printing
+        "nan" would read as a plotting bug.
+        """
+        from Capricho.analysis import format_metrics_text
+
+        self.assertEqual(format_metrics_text(np.nan, np.nan, np.nan), "")
+
+    def test_partially_defined_metrics(self):
+        """Test that defined metrics survive when others are undefined."""
+        from Capricho.analysis import format_metrics_text
+
+        self.assertEqual(
+            format_metrics_text(np.nan, 0.85, 0.72), "Spearman $\\rho: 0.85$\nKendall $\\tau: 0.72$"
+        )
+
+    def test_negative_r2_is_kept(self):
+        """Test that a negative R2 is a real value and must not be dropped."""
+        from Capricho.analysis import format_metrics_text
+
+        self.assertIn("$R^2: -0.79$", format_metrics_text(-0.79, 0.17, 0.15))
+
+
+class TestSampleSizeInPlotTitles(unittest.TestCase):
+    """Tests that plots report the number of pairwise comparisons in their titles."""
+
+    @staticmethod
+    def _exploded_fixture():
+        """Build a minimal exploded subset with two distinguishable flags."""
+        return pd.DataFrame(
+            {
+                "pchembl_value_x": ["7.0", "8.0", "6.5", "9.0"],
+                "pchembl_value_y": ["7.2", "8.4", "6.1", "9.3"],
+                "assay_chembl_id_x": ["CHEMBL1", "CHEMBL1", "CHEMBL3", "CHEMBL3"],
+                "assay_chembl_id_y": ["CHEMBL2", "CHEMBL2", "CHEMBL4", "CHEMBL4"],
+                "data_dropping_comment_x": [
+                    "Data Validity Comment Present",
+                    "Data Validity Comment Present",
+                    "Undefined Stereochemistry",
+                    "Undefined Stereochemistry",
+                ],
+                "data_dropping_comment_y": [
+                    "Data Validity Comment Present",
+                    "Data Validity Comment Present",
+                    "Undefined Stereochemistry",
+                    "Undefined Stereochemistry",
+                ],
+                "data_processing_comment_x": ["", "", "", ""],
+                "data_processing_comment_y": ["", "", "", ""],
+                "dropping_comment": [
+                    "Data Validity Comment Present",
+                    "Data Validity Comment Present",
+                    "Undefined Stereochemistry",
+                    "Undefined Stereochemistry",
+                ],
+                "processing_comment": ["", "", "", ""],
+            }
+        )
+
+    def test_plot_subset_reports_sample_size(self):
+        """Test that plot_subset appends the number of plotted pairs to the title."""
+        import matplotlib.pyplot as plt
+
+        from Capricho.analysis import plot_subset
+
+        df = pd.DataFrame(
+            {
+                "pchembl_value_x": [7.0, 8.0, 6.5],
+                "pchembl_value_y": [7.2, 8.4, 6.1],
+            }
+        )
+
+        fig, ax = plot_subset(df, title="Cleaned Ki Data")
+        self.assertEqual(ax.get_title(), "Cleaned Ki Data (n = 3 pairs)")
+        plt.close(fig)
+
+    def test_plot_subset_sample_size_can_be_disabled(self):
+        """Test that show_n=False restores the bare title."""
+        import matplotlib.pyplot as plt
+
+        from Capricho.analysis import plot_subset
+
+        df = pd.DataFrame(
+            {
+                "pchembl_value_x": [7.0, 8.0],
+                "pchembl_value_y": [7.2, 8.4],
+            }
+        )
+
+        fig, ax = plot_subset(df, title="Cleaned Ki Data", show_n=False)
+        self.assertEqual(ax.get_title(), "Cleaned Ki Data")
+        plt.close(fig)
+
+    def test_multi_panel_reports_per_panel_sample_size(self):
+        """Test that each panel title carries its own pair count."""
+        import matplotlib.pyplot as plt
+
+        from Capricho.analysis import DroppingComment, plot_multi_panel_comparability
+
+        fig, axs = plot_multi_panel_comparability(
+            self._exploded_fixture(),
+            [
+                DroppingComment.DATA_VALIDITY_COMMENT.value,
+                DroppingComment.UNDEFINED_STEREOCHEMISTRY.value,
+            ],
+            ncols=2,
+        )
+
+        titles = [ax.get_title() for ax in np.asarray(axs).flatten() if ax.get_visible()]
+        self.assertEqual(titles[0], "1. Data Validity Comment Present\n(n = 2 pairs)")
+        self.assertEqual(titles[1], "2. Undefined Stereochemistry\n(n = 2 pairs)")
+        plt.close(fig)
+
+    def test_scatter_drawn_above_reference_lines(self):
+        """Test that points are drawn above the reference lines.
+
+        Points lying exactly on y=x (e.g. cross-document duplicates) were hidden
+        beneath the identity line, making populated panels look empty.
+        """
+        import matplotlib.pyplot as plt
+
+        from Capricho.analysis import (
+            DroppingComment,
+            plot_multi_panel_comparability,
+            plot_subset,
+        )
+
+        df = pd.DataFrame({"pchembl_value_x": [7.57, 8.0], "pchembl_value_y": [7.57, 8.0]})
+        fig, ax = plot_subset(df, title="On identity line")
+        line_zorders = [line.get_zorder() for line in ax.lines]
+        self.assertTrue(
+            all(ax.collections[0].get_zorder() > z for z in line_zorders),
+            "Scatter must sit above every reference line",
+        )
+        plt.close(fig)
+
+        fig, axs = plot_multi_panel_comparability(
+            self._exploded_fixture(),
+            [DroppingComment.DATA_VALIDITY_COMMENT.value],
+            ncols=1,
+        )
+        panel = np.asarray(axs).flatten()[0]
+        self.assertTrue(
+            all(panel.collections[0].get_zorder() > line.get_zorder() for line in panel.lines),
+            "Panel scatter must sit above every reference line",
+        )
+        plt.close(fig)
+
+    def test_multi_panel_uses_saturated_colors(self):
+        """Test that panels use tab10 colors, which have no washed-out light variants.
+
+        tab20 alternates dark/light pairs, so every even-numbered panel was rendered
+        in a light tint that reviewers found illegible.
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib import colormaps
+
+        from Capricho.analysis import DroppingComment, plot_multi_panel_comparability
+
+        fig, axs = plot_multi_panel_comparability(
+            self._exploded_fixture(),
+            [
+                DroppingComment.DATA_VALIDITY_COMMENT.value,
+                DroppingComment.UNDEFINED_STEREOCHEMISTRY.value,
+            ],
+            ncols=2,
+        )
+
+        tab10 = [tuple(c) for c in colormaps["tab10"].colors]
+        axs_flat = np.asarray(axs).flatten()
+        for idx in range(2):
+            facecolor = tuple(axs_flat[idx].collections[0].get_facecolor()[0][:3])
+            self.assertEqual(facecolor, tab10[idx], f"Panel {idx + 1} should use tab10 color {idx}")
+        plt.close(fig)
+
+
+class TestPlotCrossAssayCoverage(unittest.TestCase):
+    """Tests that the coverage plot adapts to the number of datasets it is given."""
+
+    @staticmethod
+    def _coverage_fixture(n_datasets=2):
+        """Coverage table with one low-overlap and one high-overlap dataset per repeat."""
+        import pandas as pd
+
+        rows = []
+        for idx in range(n_datasets):
+            overlap = 41.2 if idx % 2 else 5.6
+            assay_overlap = 80.0 if idx % 2 else 7.5
+            rows.append(
+                {
+                    "dataset": f"d{idx}",
+                    "comparable_datapoints": 1234,
+                    "aggregated_datapoints": 2995,
+                    "datapoint_overlap_pct": overlap,
+                    "assays_with_overlap": 80,
+                    "represented_assays": 100,
+                    "assay_overlap_pct": assay_overlap,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def test_draws_one_panel_per_denominator(self):
+        """Test that the two overlap denominators get one panel each."""
+        import matplotlib.pyplot as plt
+
+        from Capricho.analysis import plot_cross_assay_coverage
+
+        fig, axes = plot_cross_assay_coverage(self._coverage_fixture())
+
+        self.assertEqual(len(axes), 2)
+        # A full-width track plus the filled share, for each dataset.
+        for ax in axes:
+            self.assertEqual(len(ax.patches), 4)
+        plt.close(fig)
+
+    def test_labels_rename_the_axis_ticks(self):
+        """Test that dataset names are shown, and mapped through `labels` when given."""
+        import matplotlib.pyplot as plt
+
+        from Capricho.analysis import plot_cross_assay_coverage
+
+        fig, axes = plot_cross_assay_coverage(self._coverage_fixture(), labels={"d0": r"IC$_{50}$"})
+
+        self.assertEqual([t.get_text() for t in axes[0].get_yticklabels()], [r"IC$_{50}$", "d1"])
+        plt.close(fig)
+
+    def test_height_grows_with_the_number_of_datasets(self):
+        """Test that 14 datasets are not squeezed into the height used for 2."""
+        import matplotlib.pyplot as plt
+
+        from Capricho.analysis import plot_cross_assay_coverage
+
+        fig_small, _ = plot_cross_assay_coverage(self._coverage_fixture(2))
+        fig_large, _ = plot_cross_assay_coverage(self._coverage_fixture(14))
+
+        small_height = fig_small.get_size_inches()[1]
+        large_height = fig_large.get_size_inches()[1]
+        self.assertGreater(large_height, small_height)
+        # Row pitch must stay wide enough for the two-line in-bar label.
+        self.assertGreater((large_height - small_height) / 12, 0.45)
+        plt.close(fig_small)
+        plt.close(fig_large)
+
+    def test_color_can_be_set_per_dataset(self):
+        """Test that a dict of colors is applied row by row, as case 3 does per direction."""
+        import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
+
+        from Capricho.analysis import plot_cross_assay_coverage
+
+        fig, axes = plot_cross_assay_coverage(
+            self._coverage_fixture(), color={"d0": "darkorange", "d1": "purple"}
+        )
+
+        # The first two patches are the tracks; the filled bars follow in row order.
+        filled = axes[0].patches[2:]
+        self.assertEqual(filled[0].get_facecolor()[:3], mcolors.to_rgb("darkorange"))
+        self.assertEqual(filled[1].get_facecolor()[:3], mcolors.to_rgb("purple"))
+        plt.close(fig)
+
+    def test_empty_coverage_is_an_error(self):
+        """Test that an empty table is refused rather than drawn as a blank figure."""
+        import pandas as pd
+
+        from Capricho.analysis import plot_cross_assay_coverage
+
+        with self.assertRaisesRegex(ValueError, "no rows"):
+            plot_cross_assay_coverage(pd.DataFrame(columns=["dataset"]))
+
+    def test_plots_what_summarize_curation_reports(self):
+        """Test the whole seam, so the plot cannot drift from the table that feeds it.
+
+        The fixture above hand-builds the wide table; only this test proves the columns
+        `coverage_table` actually produces are the ones the panels read.
+        """
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        from Capricho.analysis import plot_cross_assay_coverage
+        from Capricho.flag_report import coverage_table, summarize_curation
+
+        aggregated = pd.DataFrame(
+            {
+                "assay_chembl_id": ["CHEMBL1|CHEMBL2", "CHEMBL1", "CHEMBL3"],
+                "data_dropping_comment": ["", "", ""],
+            }
+        )
+        coverage = coverage_table(summarize_curation("A2B", aggregated=aggregated))
+
+        fig, axes = plot_cross_assay_coverage(coverage)
+
+        # 1 of 3 datapoints is comparable, and 2 of 3 assay IDs overlap.
+        self.assertIn("(1/3)", axes[0].texts[0].get_text())
+        self.assertIn("(2/3)", axes[1].texts[0].get_text())
         plt.close(fig)
 
 

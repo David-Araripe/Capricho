@@ -15,7 +15,28 @@ from Capricho.chembl.unit_conversions import (
     convert_molar_concentration_units,
     convert_permeability_units,
     convert_time_units,
+    is_unit_annotation_error_diff,
 )
+
+
+class TestIsUnitAnnotationErrorDiff(unittest.TestCase):
+    """The unit-annotation-error predicate flags exact multiples of 3 log units (nM<->uM<->mM<->M)."""
+
+    def test_exact_multiples_of_three_are_flagged(self):
+        for diff in (3.0, 6.0, 9.0, 12.0):
+            self.assertTrue(bool(is_unit_annotation_error_diff(diff)), f"{diff} should flag")
+
+    def test_zero_and_non_multiples_are_not_flagged(self):
+        for diff in (0.0, 1.5, 4.5, 5.0, 7.0):
+            self.assertFalse(bool(is_unit_annotation_error_diff(diff)), f"{diff} should not flag")
+
+    def test_floating_point_tolerance(self):
+        self.assertTrue(bool(is_unit_annotation_error_diff(2.9999999998)))  # ~3.0 within tolerance
+        self.assertFalse(bool(is_unit_annotation_error_diff(3.01)))  # clearly off a multiple
+
+    def test_vectorized_input(self):
+        mask = is_unit_annotation_error_diff(pd.Series([3.0, 4.5, 6.0, 9.0]))
+        self.assertEqual(list(mask), [True, False, True, True])
 
 
 class TestConvertPermeabilityUnits(unittest.TestCase):

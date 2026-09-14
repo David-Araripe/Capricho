@@ -9,15 +9,26 @@ from rdkit import Chem
 from rdkit.Chem import rdFingerprintGenerator
 
 
+def _mol_to_morganFP(mol: Chem.Mol, radius: int = 2, nBits=2048, useChirality=False, **kwargs) -> np.ndarray:
+    generator = rdFingerprintGenerator.GetMorganGenerator(
+        radius=radius, fpSize=nBits, includeChirality=useChirality, **kwargs
+    )
+    return generator.GetFingerprintAsNumPy(mol).reshape(1, -1)
+
+
+def _mol_to_RDKitFP(mol: Chem.Mol, minPath=1, maxPath=7, nBits=2048, **kwargs) -> np.ndarray:
+    generator = rdFingerprintGenerator.GetRDKitFPGenerator(
+        minPath=minPath, maxPath=maxPath, fpSize=nBits, **kwargs
+    )
+    return generator.GetFingerprintAsNumPy(mol).reshape(1, -1)
+
+
 def smi_to_morganFP(smi, radius: int = 2, nBits=2048, useChirality=False, **kwargs) -> np.ndarray:
     mol = Chem.MolFromSmiles(smi)
     if mol is None:
         logger.warning(f"Invalid SMILES detected: {smi}")
         return None
-    morgan_gen = rdFingerprintGenerator.GetMorganGenerator(
-        radius=radius, fpSize=nBits, includeChirality=useChirality, **kwargs
-    )
-    return morgan_gen.GetFingerprintAsNumPy(mol).reshape(1, -1)
+    return _mol_to_morganFP(mol, radius=radius, nBits=nBits, useChirality=useChirality, **kwargs)
 
 
 def smi_to_RDKitFP(smi, minPath=1, maxPath=7, nBits=2048, **kwargs) -> np.ndarray:
@@ -25,10 +36,18 @@ def smi_to_RDKitFP(smi, minPath=1, maxPath=7, nBits=2048, **kwargs) -> np.ndarra
     if mol is None:
         logger.warning(f"Invalid SMILES detected: {smi}")
         return None
-    rdkit_gen = rdFingerprintGenerator.GetRDKitFPGenerator(
-        minPath=minPath, maxPath=maxPath, fpSize=nBits, **kwargs
-    )
-    return rdkit_gen.GetFingerprintAsNumPy(mol).reshape(1, -1)
+    return _mol_to_RDKitFP(mol, minPath=minPath, maxPath=maxPath, nBits=nBits, **kwargs)
+
+
+def smi_to_mixed_FP(smi, morgan_kwargs: dict, rdkit_kwargs: dict) -> np.ndarray:
+    """Calculate both fingerprints after parsing a SMILES string only once."""
+    mol = Chem.MolFromSmiles(smi)
+    if mol is None:
+        logger.warning(f"Invalid SMILES detected: {smi}")
+        return None
+    morgan_fp = _mol_to_morganFP(mol, **morgan_kwargs)
+    rdkit_fp = _mol_to_RDKitFP(mol, **rdkit_kwargs)
+    return np.concatenate([morgan_fp, rdkit_fp], axis=1)
 
 
 def calculate_mixed_FPs(
@@ -60,32 +79,22 @@ def calculate_mixed_FPs(
     if rdkit_kwargs is None:
         rdkit_kwargs = {}
 
-    morganfunc = partial(smi_to_morganFP, **morgan_kwargs)
-    rdkitfpfunc = partial(smi_to_RDKitFP, **rdkit_kwargs)
-
-    morgan_applier = ParallelApplier(
-        morganfunc,
+    mixed_func = partial(
+        smi_to_mixed_FP,
+        morgan_kwargs=morgan_kwargs,
+        rdkit_kwargs=rdkit_kwargs,
+    )
+    applier = ParallelApplier(
+        mixed_func,
         smiles,
         n_jobs=n_jobs,
         backend="loky",
         show_progress=True,
         chunk_size=chunk_size,
-        custom_desc="Calculating Morgan FPs",
+        custom_desc="Calculating mixed FPs",
     )
-    rdkit_applier = ParallelApplier(
-        rdkitfpfunc,
-        smiles,
-        n_jobs=n_jobs,
-        backend="loky",
-        show_progress=True,
-        chunk_size=chunk_size,
-        custom_desc="Calculating RDKit FPs",
-    )
-
-    morgan_fps = morgan_applier()
-    rdkit_fps = rdkit_applier()
+    mixed_fps = applier()
 
     if return_stacked:
-        return np.concatenate([np.concatenate(morgan_fps), np.concatenate(rdkit_fps)], axis=1).shape
-    else:
-        return [np.concatenate([morfp, rdkfp], axis=1) for morfp, rdkfp in zip(morgan_fps, rdkit_fps)]
+        return np.concatenate(mixed_fps).shape
+    return mixed_fps

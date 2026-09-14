@@ -48,21 +48,21 @@ capricho explore --query "
 
 ## Step 2: Basic ADMET Data Retrieval
 
-Once you've identified assays, retrieve the data using `--aggregate-on standard_value`:
+Once you've identified assays, retrieve the data using `--value-column standard_value`:
 
 ```bash
 capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279,CHEMBL3529278 \
   --assay-types A \
   --confidence-scores 0,1,2,3,4,5,6,7,8,9 \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --output-path caco2_basic.csv
 ```
 
 Key options:
 - `--assay-types A`: Filter to ADMET assays
 - `--confidence-scores 0,...,9`: ADMET assays not necessarily require a target to be assigned. Lower confidence scores can be acceptable.
-- `--aggregate-on standard_value`: Aggregate on raw values instead of pChEMBL
+- `--value-column standard_value`: Summarize raw measured values instead of pChEMBL
 
 ## Step 3: Handling Unit Heterogeneity
 
@@ -74,7 +74,7 @@ To keep measurements with different units separate, use `--id-columns`:
 capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279,CHEMBL3529278 \
   --assay-types A \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --id-columns standard_units \
   --output-path caco2_grouped_by_units.csv
 ```
@@ -89,7 +89,7 @@ To convert all measurements to a common unit, use `--convert-units`:
 capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279,CHEMBL3529278 \
   --assay-types A \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --convert-units \
   --output-path caco2_converted.csv
 ```
@@ -105,7 +105,7 @@ capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279,CHEMBL3529278 \
   --assay-types A \
   --standard-units "10^-6 cm/s,cm/s" \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --output-path caco2_filtered.csv
 ```
 
@@ -117,7 +117,7 @@ ADMET measurements are highly dependent on experimental conditions. Use `--id-co
 capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279,CHEMBL3529278 \
   --assay-types A \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --convert-units \
   --id-columns assay_cell_type,standard_units \
   --metadata-columns assay_description,assay_organism \
@@ -139,7 +139,7 @@ capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279,CHEMBL3529278,CHEMBL3529277,CHEMBL3529276 \
   --assay-types A \
   --confidence-scores 0,1,2,3,4,5,6,7,8,9 \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --convert-units \
   --id-columns standard_units,assay_cell_type \
   --metadata-columns assay_description,assay_organism \
@@ -149,7 +149,7 @@ capricho get \
 
 ## Understanding the Output
 
-When using `--aggregate-on standard_value`, the output columns include:
+When using `--value-column standard_value`, the output columns include:
 
 | Column | Description |
 |--------|-------------|
@@ -158,6 +158,37 @@ When using `--aggregate-on standard_value`, the output columns include:
 | `standard_value_median` | Median value |
 | `standard_value_n` | Number of measurements aggregated |
 | `standard_units` | Unit of measurement (converted if `--convert-units` used) |
+
+### Repeated activity identifiers in ADMET data
+
+Different ADMET conditions can produce separate output rows with the same compound and task
+identifiers. CAPRICHO keeps those rows separate when an ID column differs. With the current
+default identity method, the concrete identifier columns are `connectivity` and
+`target_chembl_id`. If `inchi`, `inchikey`, or `smiles` is selected through
+`--compound-equality`, the diagnostic uses and names that compound identifier instead.
+
+In the MDCK-MDR1 A→B permeability example, a current run reports:
+
+```text
+CAPRICHO found 10 separate activity rows with 5 repeated `connectivity` +
+`target_chembl_id` combinations; varying fields: `standard_units`,
+`assay_cell_type`.
+```
+
+One combination differs by reported unit (`10'-6/cm` versus `10^-6 cm/s`); the other four
+differ by cell type (for example, `MDCK` versus `MDCK-MDR1`). The directional Caco-2 outputs
+do not contain repeated combinations and therefore do not emit this message.
+
+Inspect the affected rows and group sizes with:
+
+```python
+data[data["shared_identifier_group"].notna()]
+data["shared_identifier_group"].value_counts()
+```
+
+If these conditions should remain separate downstream, use the fields named by the message—for
+this example, `capricho prepare --id-columns standard_units,assay_cell_type`. Otherwise, resolve
+the combinations deliberately before modeling.
 
 ## Working with Percent Inhibition Data
 
@@ -169,7 +200,7 @@ capricho get \
     --standard-units "%" \
     --assay-types A \
     --confidence-scores 0,1,2,3,4,5,6,7,8,9 \
-    --aggregate-on standard_value \
+    --value-column standard_value \
     --id-columns standard_units \
     -o percent_inhibition_data.csv
 ```

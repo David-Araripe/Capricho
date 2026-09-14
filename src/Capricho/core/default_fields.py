@@ -33,3 +33,4 @@ DOCUMENT_ID = "document_chembl_id"
 
 DATA_DROPPING_COMMENT = "data_dropping_comment"
 DATA_PROCESSING_COMMENT = "data_processing_comment"
+SHARED_IDENTIFIER_GROUP = "shared_identifier_group"

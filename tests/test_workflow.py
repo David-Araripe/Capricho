@@ -11,12 +11,14 @@ import pandas as pd
 
 from Capricho.cli.chembl_data_pipeline import aggregate_data
 from Capricho.cli.prepare import clean_data, prepare_multitask_data
+from Capricho.core.pandas_helper import assign_shared_identifier_groups
 
 
 class TestFetchFromChEMBL(unittest.TestCase):
     def setUp(self):
         self.testroot = Path(__file__).parent
         self.aggr_df = pd.read_csv(self.testroot / "resources/ADORA3_data.csv")
+        self.aggr_df = assign_shared_identifier_groups(self.aggr_df)
         self.not_aggr_df = pd.read_csv(self.testroot / "resources/ADORA3_data_not_aggregated.csv")
 
     def test_aggregate_data(self):
@@ -522,8 +524,11 @@ class TestFetchFromChEMBL(unittest.TestCase):
             value_col="standard_value",
         )
 
-        # Should have 2 rows: one for % units, one for nM units
+        # Should have 2 rows: one for % units, one for nM units. They share the
+        # simpler compound-target identifier and therefore receive one shared group label.
         self.assertEqual(len(aggr_df), 2)
+        self.assertEqual(aggr_df["shared_identifier_group"].nunique(), 1)
+        self.assertEqual(aggr_df["shared_identifier_group"].value_counts().iloc[0], 2)
 
         # Check that units are preserved and separate
         pct_row = aggr_df[aggr_df["standard_units"] == "%"]

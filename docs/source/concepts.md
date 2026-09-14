@@ -28,6 +28,40 @@ Because the connectivity layer does not encode stereochemistry, stereoisomers (e
 - Stereochemistry information is unreliable or inconsistent across sources
 - You want to combine data from different stereoisomers and tautomers into a single entry
 
+### InChI-Based
+
+The `inchi` method uses the complete standard InChI generated from each standardized SMILES:
+
+```bash
+capricho get --target-ids CHEMBL203 --compound-equality inchi
+```
+
+Unlike the connectivity layer alone, a full InChI preserves specified stereochemistry and other
+InChI layers. The output includes an `inchi` column that can also be selected in downstream
+commands such as `capricho prepare --compound-col inchi`.
+
+**Use When:**
+- Specified stereochemistry must remain part of compound identity
+- You want a transparent, non-hashed standard identifier
+
+### InChIKey-Based
+
+The `inchikey` method uses the complete 27-character hash of the standard InChI:
+
+```bash
+capricho get --target-ids CHEMBL203 --compound-equality inchikey
+```
+
+It preserves the distinctions encoded by the full InChI—including specified stereochemistry—in
+a compact identifier. The output includes an `inchikey` column. Because an InChIKey is a hash,
+collisions are theoretically possible, although very unlikely for ordinary chemical datasets.
+CAPRICHO retains `connectivity` in every aggregated output for backward compatibility and adds
+`inchi` or `inchikey` when that full identifier is selected.
+
+**Use When:**
+- You need stereo-aware identity in a compact, database-friendly form
+- You want to exchange identifiers with systems that use full InChIKeys
+
 ### Fingerprint-Based
 
 The `mixed_fp` method uses a concatenation of ECFP4 (Morgan, radius 2) and RDKit path-based fingerprints to determine compound identity:
@@ -176,6 +210,27 @@ capricho get --target-ids CHEMBL203 --aggregate-mutants
 
 This is useful when you want to study the target in general rather than specific mutations.
 
+### Repeated downstream activity identifiers
+
+Rows kept separate by mutation or `--id-columns` can still share the selected compound
+identifier and `target_chembl_id`. CAPRICHO labels every member of such a group in the
+`shared_identifier_group` output column. With the default method, the compound identifier is
+`connectivity`; `inchi`, `inchikey`, and `smiles` are used when those equality methods are
+selected. The label is a group identifier, not a quality
+flag: the rows may represent valid, scientifically distinct readouts. Singleton rows contain
+a missing value.
+
+```python
+# Each index is a group label and each value is that group's number of rows.
+data.shared_identifier_group.value_counts()
+```
+
+Before pivoting or modeling on compound and target alone, inspect these groups. Preserve the
+distinction by including the relevant fields in the downstream task identifier—for example,
+`capricho prepare --id-columns mutation`—or deliberately filter or combine the group when
+that is scientifically appropriate. CAPRICHO's INFO message reports the fields that vary and
+shows all members of its sampled groups where the display limit permits.
+
 ### Metadata Columns
 
 Include additional metadata in your analysis:
@@ -197,13 +252,13 @@ By default, CAPRICHO aggregates bioactivity data using the `pchembl_value` colum
 - **Half-life** (e.g., hours)
 - **Solubility** (e.g., µg/mL)
 
-For these measurements, use `--aggregate-on standard_value`:
+For these measurements, use `--value-column standard_value`:
 
 ```bash
 capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279 \
   --assay-types A \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --output-path permeability_data.csv
 ```
 
@@ -222,7 +277,7 @@ When aggregating on `standard_value`, ensure you don't inadvertently combine mea
 ```bash
 capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279 \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --id-columns standard_units \
   --output-path permeability_data.csv
 ```
@@ -239,7 +294,7 @@ The `--convert-units` flag enables automatic unit conversion before aggregation:
 ```bash
 capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279 \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --convert-units \
   --output-path permeability_data.csv
 ```
@@ -265,7 +320,7 @@ capricho get \
   --assay-ids CHEMBL1112933,CHEMBL3529279,CHEMBL3529278 \
   --assay-types A \
   --confidence-scores 0,1,2,3,4,5,6,7,8,9 \
-  --aggregate-on standard_value \
+  --value-column standard_value \
   --convert-units \
   --id-columns standard_units,assay_cell_type \
   --drop-unassigned-chiral \
@@ -488,7 +543,7 @@ Every run generates a JSON recipe file containing the full command and all param
   "assay_types": ["B", "F"],
   "chembl_version": "36",
   "compound_equality": "connectivity",
-  "aggregate_on": "pchembl_value"
+  "value_column": "pchembl_value"
 }
 ```
 

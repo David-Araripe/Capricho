@@ -2,7 +2,7 @@
 
 from enum import Enum
 from itertools import combinations
-from typing import List, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +10,11 @@ import pandas as pd
 from loguru import logger as log
 from matplotlib import colormaps
 from scipy import stats
+
+from .chembl.unit_conversions import is_unit_annotation_error_diff
+
+DEFAULT_COV_BAR_COLOR = "#2a78d6"
+
 
 def r2_score(y_true, y_pred):
     ss_res = np.sum((np.asarray(y_true) - np.asarray(y_pred)) ** 2)
@@ -27,7 +32,6 @@ class ProcessingComment(str, Enum):
     CALCULATED_PCHEMBL = "Calculated pChEMBL"
     SALT_SOLVENT_REMOVED = "Salt/solvent removed"
     PCHEMBL_DUPLICATION_ACROSS_DOCUMENTS = "pChEMBL Duplication Across Documents"
-    CORRECTED_STANDARD_RELATION = "Corrected standard_relation from = to < (censored activity_comment)"
     UNIT_CONVERTED = "Unit converted to"  # Example: "Unit converted to nM from uM"
 
 
@@ -47,6 +51,7 @@ class DroppingComment(str, Enum):
     UNIT_ANNOTATION_ERROR = "Unit Annotation Error"
     MISSING_DOCUMENT_DATE = "Missing document date"
     MIXTURE_IN_SMILES = "Mixture in SMILES"
+    ACTIVITY_COMMENT_REVIEW = "Activity with exact standard relation and inactivity-like comment"
     INSUFFICIENT_ASSAY_OVERLAP = (
         "Insufficient assay overlap"  # Example: "Insufficient assay overlap (min_overlap=5)"
     )
@@ -120,9 +125,9 @@ def get_all_comments() -> list[str]:
         DroppingComment.UNIT_ANNOTATION_ERROR.value,
         DroppingComment.MISSING_DOCUMENT_DATE.value,
         DroppingComment.MIXTURE_IN_SMILES.value,
+        DroppingComment.ACTIVITY_COMMENT_REVIEW.value,
         ProcessingComment.SALT_SOLVENT_REMOVED.value,
         ProcessingComment.CALCULATED_PCHEMBL.value,
-        ProcessingComment.CORRECTED_STANDARD_RELATION.value,
         ProcessingComment.PCHEMBL_DUPLICATION_ACROSS_DOCUMENTS.value,
         ProcessingComment.UNIT_CONVERTED.value,
     ]
@@ -437,7 +442,7 @@ def resolve_annotation_errors(
                 if row_a[assay_id_col] == row_b[assay_id_col]:
                     continue
 
-                # Check if values differ by ~3.0 or ~6.0
+                # Check if values differ by an exact multiple of 3 log units (3.0, 6.0, 9.0, ...)
                 val_a = row_a["__value_numeric__"]
                 val_b = row_b["__value_numeric__"]
 
@@ -445,11 +450,7 @@ def resolve_annotation_errors(
                     continue
 
                 diff = abs(val_a - val_b)
-                is_annotation_error = np.isclose(diff, 3.0, rtol=1e-9, atol=1e-9) or np.isclose(
-                    diff, 6.0, rtol=1e-9, atol=1e-9
-                )
-
-                if not is_annotation_error:
+                if not bool(is_unit_annotation_error_diff(diff)):
                     continue
 
                 pairs_detected += 1
@@ -605,7 +606,7 @@ def explode_assay_comparability(
     singleval_cols = [
         "connectivity",
         "target_chembl_id",
-        "repeat",
+        "source_datapoint_id",
     ]
     multival_cols = [
         "activity_id",
@@ -754,6 +755,51 @@ def format_axis_label(
     return " ".join(parts)
 
 
+def format_title_with_n(title: str, n_pairs: int, sep: str = " ") -> str:
+    """Append the number of pairwise assay comparisons to a plot title.
+
+    Each point in a comparability scatter plot is one assay-versus-assay comparison
+    for a single compound, not a compound or a raw measurement. The unit is spelled
+    out so the count cannot be misread as a compound count.
+
+    Args:
+        title: Plot title, possibly empty.
+        n_pairs: Number of pairwise comparisons plotted.
+        sep: Separator between the title and the sample size. Pass "\\n" to keep long
+            multi-panel titles from overlapping their neighbours.
+
+    Returns:
+        Title with the sample size appended, e.g. "Cleaned Ki Data (n = 383 pairs)".
+    """
+    noun = "pair" if n_pairs == 1 else "pairs"
+    sample_size = f"n = {n_pairs:,} {noun}"
+    return f"{title}{sep}({sample_size})" if title else sample_size
+
+
+def format_metrics_text(r2: float, rho: float, tau: float) -> str:
+    """Format the comparability metrics annotation, omitting undefined values.
+
+    Correlations are undefined for panels holding too few distinct points (a single
+    repeated comparison has zero variance). Printing "nan" there reads as a plotting
+    failure rather than as a property of the data, so undefined metrics are dropped
+    and the panel's sample size in the title carries the explanation.
+
+    Args:
+        r2: R² score.
+        rho: Spearman rho.
+        tau: Kendall tau.
+
+    Returns:
+        Newline-separated LaTeX annotation, empty when no metric is defined.
+    """
+    metrics = [
+        (r2, r"$R^2: {:.2f}$"),
+        (rho, r"Spearman $\rho: {:.2f}$"),
+        (tau, r"Kendall $\tau: {:.2f}$"),
+    ]
+    return "\n".join(template.format(value) for value, template in metrics if np.isfinite(value))
+
+
 def _log_comparability_metrics(
     xp: np.ndarray,
     yp: np.ndarray,
@@ -821,12 +867,14 @@ def plot_subset(
     axis_limits: Optional[Tuple[float, float]] = None,
     reference_lines: bool = True,
     units: Optional[str] = None,
+    show_n: bool = True,
 ) -> Tuple[plt.Figure, plt.Axes]:
     """Create scatter plot comparing values across assays with correlation metrics.
 
     Args:
         subset: DataFrame with {value_column}_x and {value_column}_y columns.
-        title: Plot title.
+        title: Plot title. The number of plotted pairwise comparisons is appended
+            unless show_n is False.
         color: Color for scatter points.
         alpha: Transparency for scatter points.
         figsize: Figure size as (width, height) tuple.
@@ -846,6 +894,7 @@ def plot_subset(
             most meaningful for pChEMBL-scale data.
         units: Unit string for axis labels (e.g., "10^-6 cm/s"). Converted to LaTeX
             format automatically. Only used when axis_label is None.
+        show_n: If True, append the number of pairwise comparisons to the title.
 
     Returns:
         Tuple of (figure, axes) objects.
@@ -878,8 +927,9 @@ def plot_subset(
         alpha=alpha,
         edgecolors="none",
         color=color,
+        zorder=3,  # above the reference lines, which would otherwise hide points on y=x
     )
-    ax.set_title(title)
+    ax.set_title(format_title_with_n(title, len(xp)) if show_n else title)
 
     # Determine axis limits
     if axis_limits is not None:
@@ -919,7 +969,7 @@ def plot_subset(
     ax.text(
         1.0,
         0.175,
-        rf"$R^2: {r2:.2f}$" + "\n" + rf"Spearman $\rho: {r:.2f}$" + "\n" + rf"Kendall $\tau: {tau:.2f}$",
+        format_metrics_text(r2, r, tau),
         transform=ax.transAxes,
         verticalalignment="top",
         horizontalalignment="right",
@@ -927,7 +977,9 @@ def plot_subset(
 
     # Log quantitative comparability metrics
     is_log = value_column == "pchembl_value" or log_transform
-    _log_comparability_metrics(xp.values, yp.values, label=title or "Overall", is_log_scale=is_log, rho=r, r2=r2, tau=tau)
+    _log_comparability_metrics(
+        xp.values, yp.values, label=title or "Overall", is_log_scale=is_log, rho=r, r2=r2, tau=tau
+    )
 
     # Determine axis labels
     if axis_label is not None:
@@ -953,6 +1005,170 @@ def plot_subset(
     )
 
     return fig, ax
+
+
+class _CoveragePanel(NamedTuple):
+    """One panel of :func:`plot_cross_assay_coverage`, with the columns it reads."""
+
+    pct_col: str
+    overlap_col: str
+    total_col: str
+    title: str
+    subtitle: str
+    remainder_label: str
+
+
+#: The two panels, each reporting its share against its own denominator.
+_COVERAGE_PANELS = [
+    _CoveragePanel(
+        pct_col="datapoint_overlap_pct",
+        overlap_col="comparable_datapoints",
+        total_col="aggregated_datapoints",
+        title="Datapoint overlap",
+        subtitle="Aggregated compound–target readouts measured in >1 assay",
+        remainder_label="one assay",
+    ),
+    _CoveragePanel(
+        pct_col="assay_overlap_pct",
+        overlap_col="assays_with_overlap",
+        total_col="represented_assays",
+        title="Assay overlap",
+        subtitle="Assay IDs sharing ≥1 aggregated datapoint with another assay",
+        remainder_label="isolated",
+    ),
+]
+
+
+def plot_cross_assay_coverage(
+    coverage: pd.DataFrame,
+    labels: Optional[dict] = None,
+    color: Union[str, dict] = DEFAULT_COV_BAR_COLOR,
+    title: Optional[str] = None,
+    figsize: Optional[Tuple[float, float]] = None,
+) -> Tuple[plt.Figure, np.ndarray]:
+    """Plot how much of each dataset cross-assay comparability can reach.
+
+    Comparability metrics say nothing about how much data they were computed on, so the
+    two denominators are drawn side by side: the share of aggregated datapoints measured
+    in more than one assay, and the share of represented assay identifiers that share a
+    datapoint with another assay. Each bar is a filled share against a full-width track,
+    so the part the analysis cannot see stays visible.
+
+    Args:
+        coverage: Output of :func:`~Capricho.flag_report.coverage_table`, one row per
+            dataset. Rows are drawn top to bottom in the order given, so sort or filter
+            it before plotting.
+        labels: Maps a ``dataset`` value to the axis label shown for it, for example
+            ``{"IC50 (ChEMBL 32)": r"IC$_{50}$"}``. Datasets without an entry keep their
+            name.
+        color: Colour of the filled bars: one colour for every dataset, or a dict keyed
+            by ``dataset``.
+        title: Figure-level title. No suptitle is drawn when None.
+        figsize: Overrides the default size, whose height grows with the number of
+            datasets. Label placement is tuned for the default width; below about 10
+            inches the bar labels start to collide.
+
+    Returns:
+        Tuple of the figure and the array of its two axes.
+
+    Raises:
+        ValueError: If ``coverage`` has no rows.
+    """
+
+    #: Muted palette for the coverage bars:
+    cov_track_color = "#f2f2f0"
+    cov_track_edge_color = "#8b8b87"
+    cov_text_color = "#0b0b0b"
+    cov_2nd_text_color = "#52514e"
+    cov_grid_color = "#e2e2df"
+    cov_surf_color = "#fcfcfb"
+
+    n_datasets = len(coverage)
+    if not n_datasets:
+        raise ValueError("`coverage` has no rows to plot.")
+
+    if isinstance(color, dict):
+        colors = [color.get(dataset, DEFAULT_COV_BAR_COLOR) for dataset in coverage["dataset"]]
+    else:
+        colors = [color] * n_datasets
+
+    if figsize is None:
+        # Width keeps the overlap label and the remainder label from running into each
+        # other once the counts are long; height is a fixed allowance for the titles above
+        # and the shared x label below, plus a row pitch wide enough for the two-line label
+        # to fit inside a bar at any dataset count.
+        figsize = (12, 1.5 + 0.55 * n_datasets + 0.9)
+
+    fig, axes = plt.subplots(
+        1, 2, figsize=figsize, sharex=True, facecolor=cov_surf_color, layout="constrained"
+    )
+    y_positions = np.arange(n_datasets)
+    labels = labels or {}
+    tick_labels = [labels.get(dataset, dataset) for dataset in coverage["dataset"]]
+
+    for ax, panel in zip(axes, _COVERAGE_PANELS):
+        ax.set_facecolor(cov_surf_color)
+        ax.barh(
+            y_positions,
+            100,
+            color=cov_track_color,
+            edgecolor=cov_track_edge_color,
+            linewidth=1.0,
+            height=0.56,
+        )
+        ax.barh(y_positions, coverage[panel.pct_col], color=colors, height=0.56)
+
+        for y, row in enumerate(coverage.itertuples()):
+            overlap_pct = getattr(row, panel.pct_col)
+            label_inside = overlap_pct >= 35
+            ax.text(
+                1.2 if label_inside else overlap_pct + 1.2,
+                y,
+                f"Overlap: {overlap_pct:.1f}%\n"
+                f"({getattr(row, panel.overlap_col):,}/{getattr(row, panel.total_col):,})",
+                va="center",
+                ha="left",
+                fontsize=8.5,
+                fontweight="semibold",
+                color=cov_surf_color if label_inside else cov_text_color,
+            )
+            ax.text(
+                98.8,
+                y,
+                f"{100 - overlap_pct:.1f}% {panel.remainder_label}",
+                va="center",
+                ha="right",
+                fontsize=8.5,
+                color=cov_text_color,
+            )
+
+        ax.set_title(panel.title, loc="left", fontsize=12, fontweight="bold", color=cov_text_color, pad=25)
+        # Offset in points, not axes fractions, so the subtitle stays under the title
+        # instead of drifting above it as the figure grows with the number of datasets.
+        ax.annotate(
+            panel.subtitle,
+            xy=(0, 1),
+            xycoords="axes fraction",
+            xytext=(0, 6),
+            textcoords="offset points",
+            va="bottom",
+            fontsize=8.5,
+            color=cov_2nd_text_color,
+        )
+        ax.set_yticks(y_positions, tick_labels)
+        ax.invert_yaxis()
+        ax.set_xlim(0, 100)
+        ax.set_xticks([0, 25, 50, 75, 100])
+        ax.tick_params(axis="both", colors=cov_text_color, length=0)
+        ax.set_axisbelow(True)
+        ax.grid(axis="x", color=cov_grid_color, linewidth=0.8)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+    fig.supxlabel("Share within each panel denominator (%)", fontsize=10, color=cov_text_color)
+    if title is not None:
+        fig.suptitle(title, fontsize=16, color=cov_text_color)
+    return fig, axes
 
 
 def build_query_string(comment: str, value_column: str = "pchembl_value") -> str:
@@ -983,10 +1199,7 @@ def build_query_string(comment: str, value_column: str = "pchembl_value") -> str
         return "processing_comment.str.contains('Calculated pChEMBL', regex=False) & (dropping_comment == '')"
 
     # For other processing comments (uses combined processing_comment column)
-    if comment in [
-        ProcessingComment.SALT_SOLVENT_REMOVED.value,
-        ProcessingComment.CORRECTED_STANDARD_RELATION.value,
-    ]:
+    if comment == ProcessingComment.SALT_SOLVENT_REMOVED.value:
         return f"processing_comment.str.contains('{comment}', regex=False) & dropping_comment == ''"
 
     # Special handling for unit conversion (pattern-based, uses combined processing_comment column)
@@ -1045,7 +1258,8 @@ def plot_multi_panel_comparability(
     axis_limits: Optional[Tuple[float, float]] = None,
     reference_lines: bool = True,
     units: Optional[str] = None,
-    alpha: float = 0.3,
+    alpha: float = 0.5,
+    show_n: bool = True,
 ) -> Tuple[plt.Figure, np.ndarray]:
     """Create multi-panel plot showing comparability for different data quality flags.
 
@@ -1068,6 +1282,8 @@ def plot_multi_panel_comparability(
         reference_lines: If True, draw identity and ±1/±0.3 reference lines.
         units: Unit string for axis labels (e.g., "10^-6 cm/s"). Converted to LaTeX
             format automatically. Only used when axis_label is None.
+        alpha: Transparency for scatter points.
+        show_n: If True, append each panel's number of pairwise comparisons to its title.
 
     Returns:
         Tuple of (figure, axes array).
@@ -1078,8 +1294,6 @@ def plot_multi_panel_comparability(
     comments_with_data = []  # only display the comments that have data
     n_data = []  # debugging info only
     for comment in comments:
-        if comment == "Corrected standard_relation from = to < (censored activity_comment)":
-            continue  # skip this comment as it contains discrete data only
         query_str = build_query_string(comment, value_column=value_column)
         subset = exploded_subset.query(query_str)
         if len(subset) > 0:
@@ -1093,7 +1307,10 @@ def plot_multi_panel_comparability(
         return fig, np.array([ax])
 
     nrows = int(np.ceil(len(comments_with_data) / ncols))
-    colors = [tuple([*col] + [1]) for col in colormaps["tab20"].colors]
+    # tab10 keeps every panel saturated. tab20 alternates dark/light pairs, tinting
+    # every even-numbered panel too faintly to read.
+    palette = colormaps["tab10"].colors
+    colors = [tuple([*palette[i % len(palette)]] + [1]) for i in range(len(comments_with_data))]
 
     fig, axs = plt.subplots(nrows, ncols, figsize=figsize)
     axs_flat = axs.flatten() if nrows > 1 else [axs] if ncols == 1 else axs
@@ -1169,8 +1386,13 @@ def plot_multi_panel_comparability(
             edgecolors="none",
             label=title_str,
             color=color,
+            zorder=3,  # above the reference lines, which would otherwise hide points on y=x
         )
-        ax.set_title(f"{idx}. {title_str}")
+        panel_title = f"{idx}. {title_str}"
+        ax.set_title(
+            format_title_with_n(panel_title, len(xp), sep="\n") if show_n else panel_title,
+            fontsize="medium",
+        )
 
         # Add reference lines
         if reference_lines and (value_column == "pchembl_value" or log_transform):
@@ -1197,7 +1419,7 @@ def plot_multi_panel_comparability(
         ax.text(
             1.0,
             0.175,
-            rf"$R^2: {r2:.2f}$" + "\n" + rf"Spearman $\rho: {r:.2f}$" + "\n" + rf"Kendall $\tau: {tau:.2f}$",
+            format_metrics_text(r2, r, tau),
             transform=ax.transAxes,
             verticalalignment="top",
             horizontalalignment="right",
@@ -1205,7 +1427,9 @@ def plot_multi_panel_comparability(
 
         # Log per-panel comparability metrics
         is_log = value_column == "pchembl_value" or log_transform
-        _log_comparability_metrics(xp.values, yp.values, label=title_str, is_log_scale=is_log, rho=r, r2=r2, tau=tau)
+        _log_comparability_metrics(
+            xp.values, yp.values, label=title_str, is_log_scale=is_log, rho=r, r2=r2, tau=tau
+        )
 
         if idx in [1, ncols + 1]:
             ax.set_ylabel(f"Assay 2 {label_base}")

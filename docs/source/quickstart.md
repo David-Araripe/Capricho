@@ -36,6 +36,15 @@ This downloads the latest ChEMBL version to `~/.data/chembl/` by default. Defini
 capricho download --version 33 --prefix /path/to/custom/location
 ```
 
+If you already keep ChEMBL SQLite dumps somewhere on your system, register them instead of
+downloading a second copy. CAPRICHO then reads them where they lie:
+
+```bash
+# A single release, or a directory holding one or more chembl_<version>.db files
+capricho download --set-from-path /path/to/chembl_33.db
+capricho download --set-from-path /path/to/my/chembl/dumps/
+```
+
 ## Step 2: Explore the Database
 
 Before fetching data, you might want to explore what's available:
@@ -166,7 +175,8 @@ CAPRICHO generates several files:
 
 The main data file contains these important columns:
 
-- `connectivity`: Molecular connectivity identifier
+- Compound identifier: `connectivity` by default, or `inchi`/`inchikey` when selected with
+  `--compound-equality`
 - `smiles`: Standardized SMILES representation
 - `target_chembl_id`: ChEMBL ID for the target
 - `pchembl_value_mean`: Mean pChEMBL value (aggregated)

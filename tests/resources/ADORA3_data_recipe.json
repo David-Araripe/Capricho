@@ -47,5 +47,5 @@
   "min_assay_overlap": 0,
   "strict_mutant_removal": true,
   "compound_equality": "connectivity",
-  "aggregate_on": "pchembl_value"
+  "value_column": "pchembl_value"
 }

@@ -4,212 +4,195 @@ import unittest
 
 import pandas as pd
 
+from Capricho.analysis import DroppingComment, get_all_comments
 from Capricho.chembl.data_flag_functions import (
+    REVIEW_ACTIVITY_COMMENTS,
     flag_censored_activity_comment,
     flag_incompatible_units,
     flag_insufficient_assay_overlap,
     flag_inter_document_duplication,
     flag_missing_document_date,
 )
+from Capricho.core.default_fields import DATA_DROPPING_COMMENT
+
+FLAG = DroppingComment.ACTIVITY_COMMENT_REVIEW.value
 
 
-class TestFlagCensoredActivityComment(unittest.TestCase):
-    def test_flag_inconclusive_comment(self):
-        """Test that 'Inconclusive' activity_comment with '=' relation is corrected to '<'."""
-        df = pd.DataFrame(
-            {
-                "molecule_chembl_id": ["CHEMBL1"],
-                "pchembl_value": [6.0],
-                "standard_relation": ["="],
-                "activity_comment": ["Inconclusive"],
-                "data_processing_comment": [None],
-            }
-        )
+class TestFlagActivityCommentReview(unittest.TestCase):
+    """The source relation is preserved and the comment/relation combination is flagged."""
 
-        result = flag_censored_activity_comment(df)
+    def _row(self, **overrides):
+        row = {
+            "molecule_chembl_id": "CHEMBL1",
+            "standard_type": "IC50",
+            "standard_value": 10000.0,
+            "pchembl_value": 5.0,
+            "standard_relation": "=",
+            "activity_comment": "Not Active",
+            "data_dropping_comment": None,
+            "data_processing_comment": None,
+        }
+        row.update(overrides)
+        return pd.DataFrame({k: [v] for k, v in row.items()})
 
-        self.assertEqual(result.loc[0, "standard_relation"], "<")
-        self.assertIn("Corrected standard_relation", str(result.loc[0, "data_processing_comment"]))
+    def assert_flagged(self, result, idx=0):
+        self.assertIn(FLAG, str(result.loc[idx, DATA_DROPPING_COMMENT]))
 
-    def test_flag_not_active_comment(self):
-        """Test that 'Not Active' activity_comment with '=' relation is corrected to '<'."""
-        df = pd.DataFrame(
-            {
-                "molecule_chembl_id": ["CHEMBL1"],
-                "pchembl_value": [5.5],
-                "standard_relation": ["="],
-                "activity_comment": ["Not Active"],
-                "data_processing_comment": [None],
-            }
-        )
+    def assert_not_flagged(self, result, idx=0):
+        comment = result.loc[idx, DATA_DROPPING_COMMENT]
+        self.assertNotIn(FLAG, "" if pd.isna(comment) else str(comment))
 
-        result = flag_censored_activity_comment(df)
+    def test_recognized_phrases_are_flagged_without_modifying_source_data(self):
+        phrases = [*REVIEW_ACTIVITY_COMMENTS, "INCONCLUSIVE", "InAcTiVe at 10 uM"]
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                result = flag_censored_activity_comment(
+                    self._row(activity_comment=phrase, standard_value=12345.0)
+                )
 
-        self.assertEqual(result.loc[0, "standard_relation"], "<")
-        self.assertIn("Corrected standard_relation", str(result.loc[0, "data_processing_comment"]))
+                self.assertEqual(result.loc[0, "standard_relation"], "=")
+                self.assertEqual(result.loc[0, "standard_value"], 12345.0)
+                self.assertTrue(pd.isna(result.loc[0, "data_processing_comment"]))
+                self.assert_flagged(result)
 
-    def test_flag_inactive_comment(self):
-        """Test that 'inactive at 10 uM' activity_comment with '=' relation is corrected to '<'."""
-        df = pd.DataFrame(
-            {
-                "molecule_chembl_id": ["CHEMBL1"],
-                "pchembl_value": [5.0],
-                "standard_relation": ["="],
-                "activity_comment": ["inactive at 10 uM"],
-                "data_processing_comment": [None],
-            }
-        )
+    def test_flagging_is_independent_of_the_endpoint(self):
+        for standard_type in ["IC50", "Ki", "Potency", "Inhibition", "Residual activity", None]:
+            with self.subTest(standard_type=standard_type):
+                df = self._row(standard_type=standard_type)
+                if standard_type is None:
+                    df = df.drop(columns=["standard_type"])
 
-        result = flag_censored_activity_comment(df)
+                result = flag_censored_activity_comment(df)
 
-        self.assertEqual(result.loc[0, "standard_relation"], "<")
-        self.assertIn("Corrected standard_relation", str(result.loc[0, "data_processing_comment"]))
+                self.assertEqual(result.loc[0, "standard_relation"], "=")
+                self.assert_flagged(result)
 
-    def test_no_change_for_active_comment(self):
-        """Test that 'Active' activity_comment with '=' relation remains unchanged."""
-        df = pd.DataFrame(
-            {
-                "molecule_chembl_id": ["CHEMBL1"],
-                "pchembl_value": [7.0],
-                "standard_relation": ["="],
-                "activity_comment": ["Active"],
-                "data_processing_comment": [None],
-            }
-        )
+    def test_unrecognized_comments_are_not_flagged(self):
+        comments = [
+            None,
+            "",
+            "Active",
+            "Highly active",
+            "Compound bound to the standard reference",
+            "Not determinedly conclusive",
+            "Inactivestate mutant",
+            "ND",
+            "N.D.",
+            "nd at 10 uM",
+            "Ligand efficiency reported",
+            "Standard compound",
+            "Bound to target",
+            "No inhibition found",
+            "Interpretation: Specific Binding",
+            "See Activity_Supp For Individual Animal Data",
+        ]
+        for comment in comments:
+            with self.subTest(comment=comment):
+                result = flag_censored_activity_comment(self._row(activity_comment=comment))
 
-        result = flag_censored_activity_comment(df)
+                self.assertEqual(result.loc[0, "standard_relation"], "=")
+                self.assert_not_flagged(result)
 
-        self.assertEqual(result.loc[0, "standard_relation"], "=")
-        self.assertTrue(
-            pd.isna(result.loc[0, "data_processing_comment"])
-            or result.loc[0, "data_processing_comment"] in [None, "", pd.NA]
-        )
-
-    def test_no_change_for_already_correct_relation(self):
-        """Test that 'Inactive' activity_comment with '>' relation remains unchanged."""
-        df = pd.DataFrame(
-            {
-                "molecule_chembl_id": ["CHEMBL1"],
-                "pchembl_value": [6.5],
-                "standard_relation": [">"],
-                "activity_comment": ["Inactive"],
-                "data_processing_comment": [None],
-            }
-        )
+    def test_all_null_non_string_comment_column_is_accepted(self):
+        df = self._row(activity_comment=float("nan"))
+        self.assertTrue(pd.api.types.is_float_dtype(df["activity_comment"]))
 
         result = flag_censored_activity_comment(df)
 
-        self.assertEqual(result.loc[0, "standard_relation"], ">")
+        self.assertTrue(result["activity_comment"].isna().all())
+        self.assert_not_flagged(result)
 
-    def test_no_change_for_null_comment(self):
-        """Test that null activity_comment with '=' relation remains unchanged."""
-        df = pd.DataFrame(
+    def test_non_exact_relations_are_not_flagged(self):
+        """Rows already carrying a bound are not an exact-relation conflict."""
+        for relation in ["<", ">", "<=", ">="]:
+            with self.subTest(relation=relation):
+                result = flag_censored_activity_comment(self._row(standard_relation=relation))
+
+                self.assertEqual(result.loc[0, "standard_relation"], relation)
+                self.assert_not_flagged(result)
+
+    def test_existing_dropping_comment_is_appended_to(self):
+        """An existing quality flag is preserved rather than overwritten."""
+        result = flag_censored_activity_comment(self._row(data_dropping_comment="Potential Duplicate"))
+
+        comment = str(result.loc[0, DATA_DROPPING_COMMENT])
+        self.assertIn("Potential Duplicate", comment)
+        self.assertIn(FLAG, comment)
+
+    def test_flag_is_registered_as_a_dropping_comment(self):
+        """The flag is a first-class quality flag, so summaries and prepare can see it."""
+        self.assertIn(FLAG, get_all_comments())
+
+    def test_missing_required_columns_leave_the_frame_unchanged(self):
+        for column in ["activity_comment", "standard_relation"]:
+            with self.subTest(column=column):
+                df = self._row().drop(columns=[column])
+
+                result = flag_censored_activity_comment(df)
+
+                self.assertEqual(result.to_dict(), df.to_dict())
+
+
+class TestActivityCommentReviewRealChEMBLRows(unittest.TestCase):
+    """Regression fixture of traceable ChEMBL 36 activities."""
+
+    FIXTURE = [
+        # activity_id, assay_chembl_id, standard_type, relation, value, comment
+        (1230176, "CHEMBL815031", "Inhibition", "=", None, "Not Active"),
+        (1233640, "CHEMBL816326", "Inhibition", "=", None, "Not Active"),
+        (3607895, "CHEMBL1614478", "IC50", "=", 11403.0, "Not Active"),
+        (3607918, "CHEMBL1614478", "IC50", "=", 20942.0, "Not Active"),
+        (3630349, "CHEMBL1614542", "EC50", "=", 64450.0, "Not Active"),
+        (3630376, "CHEMBL1614542", "EC50", "=", 10780.0, "Not Active"),
+        (5538426, "CHEMBL1738125", "Ki", "=", 10000.0, "inactive"),
+        (10915394, "CHEMBL2040657", "Inhibition", "=", None, "inactive"),
+        (14249048, "CHEMBL3215220", "Ki", "=", 21100.0, "inactive"),
+    ]
+
+    UNRELATED = [
+        (900000001, "CHEMBL999901", "IC50", "=", 50.0, "Compound bound to the standard reference"),
+        (900000002, "CHEMBL999902", "IC50", "=", 75.0, "Active"),
+    ]
+
+    def build_df(self, rows):
+        return pd.DataFrame(
             {
-                "molecule_chembl_id": ["CHEMBL1"],
-                "pchembl_value": [6.0],
-                "standard_relation": ["="],
-                "activity_comment": [None],
-                "data_processing_comment": [None],
+                "activity_id": [r[0] for r in rows],
+                "assay_chembl_id": [r[1] for r in rows],
+                "standard_type": [r[2] for r in rows],
+                "standard_relation": [r[3] for r in rows],
+                "standard_value": [r[4] for r in rows],
+                "activity_comment": [r[5] for r in rows],
+                "data_dropping_comment": [None] * len(rows),
             }
         )
 
-        result = flag_censored_activity_comment(df)
+    def test_recognized_comments_are_flagged_without_changing_relations_or_values(self):
+        result = flag_censored_activity_comment(self.build_df(self.FIXTURE))
 
-        self.assertEqual(result.loc[0, "standard_relation"], "=")
+        self.assertListEqual(list(result["standard_relation"]), ["="] * len(self.FIXTURE))
+        for _, row in result.iterrows():
+            with self.subTest(activity_id=row["activity_id"]):
+                self.assertIn(FLAG, str(row[DATA_DROPPING_COMMENT]))
 
-    def test_case_insensitive_matching(self):
-        """Test that keyword matching is case-insensitive."""
-        df = pd.DataFrame(
-            {
-                "molecule_chembl_id": ["CHEMBL1", "CHEMBL2", "CHEMBL3"],
-                "pchembl_value": [6.0, 5.5, 5.0],
-                "standard_relation": ["=", "=", "="],
-                "activity_comment": ["INCONCLUSIVE", "not active", "InAcTiVe"],
-                "data_processing_comment": [None, None, None],
-            }
-        )
+        same_assay = result[result["assay_chembl_id"] == "CHEMBL1614478"]
+        self.assertListEqual(sorted(same_assay["standard_value"]), [11403.0, 20942.0])
 
-        result = flag_censored_activity_comment(df)
-
-        self.assertEqual(result.loc[0, "standard_relation"], "<")
-        self.assertEqual(result.loc[1, "standard_relation"], "<")
-        self.assertEqual(result.loc[2, "standard_relation"], "<")
-
-    def test_batch_correction(self):
-        """Test that multiple rows are corrected in a single call."""
-        df = pd.DataFrame(
-            {
-                "molecule_chembl_id": ["CHEMBL1", "CHEMBL2", "CHEMBL3", "CHEMBL4", "CHEMBL5", "CHEMBL6"],
-                "pchembl_value": [6.0, 5.5, 7.0, 6.5, 5.0, 6.0],
-                "standard_relation": ["=", "=", "=", ">", "=", "="],
-                "activity_comment": [
-                    "Inconclusive",
-                    "Not Active",
-                    "Active",
-                    "Inactive",
-                    "inactive at 10 uM",
-                    None,
-                ],
-                "data_processing_comment": [None, None, None, None, None, None],
-            }
-        )
+    def test_unrelated_free_text_rows_are_unchanged(self):
+        """Rows whose comment says nothing about inactivity stay unflagged."""
+        df = self.build_df(self.UNRELATED)
 
         result = flag_censored_activity_comment(df)
 
-        # Check each row
-        self.assertEqual(
-            result.loc[0, "standard_relation"], "<", "CHEMBL1: Should change '=' to '<' (Inconclusive)"
-        )
-        self.assertEqual(
-            result.loc[1, "standard_relation"], "<", "CHEMBL2: Should change '=' to '<' (Not Active)"
-        )
-        self.assertEqual(result.loc[2, "standard_relation"], "=", "CHEMBL3: Should remain '=' (Active)")
-        self.assertEqual(
-            result.loc[3, "standard_relation"], ">", "CHEMBL4: Should remain '>' (already correct)"
-        )
-        self.assertEqual(
-            result.loc[4, "standard_relation"], "<", "CHEMBL5: Should change '=' to '<' (inactive at 10 uM)"
-        )
-        self.assertEqual(
-            result.loc[5, "standard_relation"], "=", "CHEMBL6: Should remain '=' (no activity_comment)"
-        )
-
-    def test_missing_activity_comment_column(self):
-        """Test that function handles missing activity_comment column gracefully."""
-        df = pd.DataFrame(
-            {
-                "molecule_chembl_id": ["CHEMBL1"],
-                "pchembl_value": [6.0],
-                "standard_relation": ["="],
-                "data_processing_comment": [None],
-            }
-        )
-
-        result = flag_censored_activity_comment(df)
-
-        # Should return DataFrame unchanged
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result.loc[0, "standard_relation"], "=")
-
-    def test_missing_standard_relation_column(self):
-        """Test that function handles missing standard_relation column gracefully."""
-        df = pd.DataFrame(
-            {
-                "molecule_chembl_id": ["CHEMBL1"],
-                "pchembl_value": [6.0],
-                "activity_comment": ["Inactive"],
-                "data_processing_comment": [None],
-            }
-        )
-
-        result = flag_censored_activity_comment(df)
-
-        # Should return DataFrame unchanged
-        self.assertEqual(len(result), 1)
+        self.assertListEqual(list(result["standard_relation"]), ["=", "="])
+        for _, row in result.iterrows():
+            with self.subTest(activity_id=row["activity_id"]):
+                comment = row[DATA_DROPPING_COMMENT]
+                self.assertNotIn(FLAG, "" if pd.isna(comment) else str(comment))
 
 
 class TestFlagInterDocumentDuplication(unittest.TestCase):
-    """Validates censored activity comment handling and inter-document duplication detection for discrete measurements."""
+    """Validates inter-document duplication detection for discrete measurements."""
 
     def test_only_flags_discrete_measurements(self):
         """Test that only discrete measurements (standard_relation='=') are flagged as duplicates."""

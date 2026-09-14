@@ -6,15 +6,16 @@ import numpy as np
 
 MIXTURE_REGEX = re.compile(
     r"^("  # start of the string
-    r"Na\+?|Cl\-?|Br\-?|K\+?|F\-?|I\-?|Ca\+{2}?|Mg\+{2}?|Zn\+{2}?|OH\-?|"  # Salts
-    r"\[Na\+\]?|\[K\+\]?|\[Cl-\]?|\[Br-\]?|\[I-\]?|\[Zn\+2\]?|\[Li\+\]?|"  # Salts
+    r"Na\+?|Cl\-?|Br\-?|K\+?|F\-?|I\-?|Ca\+{2}?|Mg\+{2}?|Zn\+{2}?|OH\-?|"  # Salts (bare)
+    r"\[Na\+\]?|\[K\+\]?|\[Cl-\]?|\[Br-\]?|\[I-\]?|"  # Salts (bracketed, monovalent)
+    r"\[Zn\+2\]?|\[Ca\+2\]?|\[Mg\+2\]?|\[Li\+\]?|"  # Salts (bracketed, divalent + Li)
     r"CCCC\(=O\)\[O-\]|"  # Butyrate
     r"CCCCC\(=O\)\[O-\]|"  # Pentanoate
-    r"C1=CC=C\(C=C1\)C\(=O\)\[O-\]|"  # Benzoate
+    r"O=C\(\[O-\]\)c1ccccc1|"  # Benzoate (RDKit-canonical)
     r"\[O-\]\[Cl\+3\]\(\[O-\]\)\(\[O-\]\)\[O-\]|"  # Perchlorate [O-][Cl+3]([O-])([O-])[O-]
-    r"C1=CC=NC=C1|"  # Pyridine
-    r"O=CN\(C\)C|"  # N,N-Dimethylformamide
-    r"\[NO\]|"  # Nitric oxide
+    r"c1ccncc1|"  # Pyridine (RDKit-canonical)
+    r"CN\(C\)C=O|"  # N,N-Dimethylformamide (RDKit-canonical)
+    r"\[N\]=O|"  # Nitric oxide (RDKit-canonical)
     r"c1ccc\(\[B-\]\(c2ccccc2\)\(c2ccccc2\)c2ccccc2\)cc1|"  # Tetraphenylborate
     r"^O$|^N$"  # Match full strings for O and N
     r")$"  # end of the string

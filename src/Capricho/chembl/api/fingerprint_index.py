@@ -12,9 +12,12 @@ the installed one, since fingerprint generation is in principle free to change b
 The warning is left visible so that the discrepancy is never hidden from the user.
 """
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Sequence, Union
+from typing import TYPE_CHECKING
 
 # chembl_downloader has no public accessor for the .h5 asset; `_download_helper` builds the release
 # URL and stores the file through pystow, the same way `download_fps` does for .fps.gz. Kept at
@@ -33,16 +36,25 @@ FPSIM2_INSTALL_HINT = (
 )
 
 
+def _require_fpsim2():
+    """Import and return the FPSim2 engine class with an actionable error message."""
+    try:
+        from FPSim2 import FPSim2Engine
+    except ImportError as exc:
+        raise ImportError(FPSIM2_INSTALL_HINT) from exc
+    return FPSim2Engine
+
+
 def check_and_download_fingerprint_index(
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
 ) -> Path:
     """Check if the ChEMBL fingerprint index is present, downloading it if not.
 
-    The index is stored next to the SQLite database, in the same pystow versioned directory.
-    Resolving the version goes through :func:`check_and_download_chembl_db` so that the index
-    and the database always describe the same ChEMBL release; searches need both, since the
-    index is keyed by ``molregno`` and the database resolves those to ChEMBL IDs.
+    The index is stored in the pystow directory for the selected release. Resolving the version
+    goes through :func:`check_and_download_chembl_db` so that the index and database always
+    describe the same ChEMBL release; searches need both, since the index is keyed by ``molregno``
+    and the database resolves those values to ChEMBL IDs.
 
     Args:
         prefix: Optional prefix for an alternative data directory, as a list of path components.
@@ -71,27 +83,23 @@ def check_and_download_fingerprint_index(
 
 
 @lru_cache(maxsize=1)
-def _load_engine(fp_path: str, in_memory: bool) -> "FPSim2Engine":
+def _load_engine(fp_path: str, in_memory: bool) -> FPSim2Engine:
     """Load and cache an FPSim2 engine.
 
     Cached because loading the index costs a few seconds. Only one engine is held, since an
     in-memory index for a full ChEMBL release is roughly 1 GB; use
     :func:`clear_fingerprint_index_cache` to release it.
     """
-    try:
-        from FPSim2 import FPSim2Engine
-    except ImportError as exc:
-        raise ImportError(FPSIM2_INSTALL_HINT) from exc
-
+    engine_class = _require_fpsim2()
     logger.info(f"Loading fingerprint index ({'in memory' if in_memory else 'on disk'}):\n\t{fp_path}")
-    return FPSim2Engine(fp_path, in_memory_fps=in_memory)
+    return engine_class(fp_path, in_memory_fps=in_memory)
 
 
 def load_fingerprint_index(
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
     in_memory: bool = True,
-) -> "FPSim2Engine":
+) -> FPSim2Engine:
     """Load the ChEMBL fingerprint index, downloading it first if needed.
 
     Repeated calls with the same arguments reuse a cached engine, so loading the index into
@@ -107,6 +115,9 @@ def load_fingerprint_index(
     Returns:
         FPSim2Engine: the engine to run searches against.
     """
+    # Check the optional dependency before a missing database or index can trigger a multi-GB
+    # download that would only end in an ImportError.
+    _require_fpsim2()
     fp_path = check_and_download_fingerprint_index(prefix=prefix, version=version)
     return _load_engine(str(fp_path), in_memory)
 

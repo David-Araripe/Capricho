@@ -6,7 +6,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from ..core.pandas_helper import assign_stats
+from ..core.pandas_helper import assign_shared_identifier_groups, assign_stats
 from ..logger import logger
 
 
@@ -16,6 +16,7 @@ def clean_data(
     deduplicate: bool = False,
     value_col: str = "pchembl_value",
     resolve_annotation_error: Optional[str] = None,
+    compound_col: str = "connectivity",
 ) -> pd.DataFrame:
     """Clean aggregated bioactivity data by deduplicating, resolving errors, and filtering flags.
 
@@ -28,6 +29,7 @@ def clean_data(
     3. Drop flags: removes individual flagged measurements from aggregated rows
        and recalculates statistics; rows where all measurements are flagged are
        removed entirely. Non-aggregated data is filtered at the row level.
+    4. Recalculate shared-identifier group labels after any row removal.
 
     Appropriate flags for dropping include unit errors, undefined stereochemistry,
     assay size issues, and mixtures. For potential duplicates, prefer using
@@ -52,6 +54,8 @@ def clean_data(
         resolve_annotation_error: Resolution strategy for unit annotation errors.
             Currently only "first" is supported (keep earliest document).
             Cannot be used together with dropping "Unit Annotation Error" flags.
+        compound_col: Column defining compound identity for re-aggregation and
+            ``shared_identifier_group``. Defaults to ``connectivity``.
 
     Returns:
         Cleaned DataFrame.
@@ -67,6 +71,7 @@ def clean_data(
         filter_aggregated_dropping_flags,
         resolve_annotation_errors,
     )
+    from ..flag_report import format_flag_summary, summarize_flags
 
     # Validate: can't both resolve and drop annotation errors
     if resolve_annotation_error is not None and drop_flags:
@@ -122,12 +127,17 @@ def clean_data(
         # Re-aggregate the data
         from .chembl_data_pipeline import re_aggregate_data
 
-        # Detect extra_id_cols from columns between connectivity and smiles
+        # Detect extra ID columns placed between compound identifiers and SMILES.
         cols = list(df.columns)
         if "connectivity" in cols and "smiles" in cols:
-            conn_idx = cols.index("connectivity")
+            connectivity_idx = cols.index("connectivity")
             smiles_idx = cols.index("smiles")
-            detected_id_cols = cols[conn_idx + 1 : smiles_idx]
+            identifier_columns = {"connectivity", compound_col, "smiles"}
+            detected_id_cols = [
+                column
+                for column in cols[connectivity_idx + 1 : smiles_idx]
+                if column not in identifier_columns
+            ]
             logger.info(f"Detected id_columns for re-aggregation: {detected_id_cols}")
         else:
             detected_id_cols = []
@@ -136,14 +146,17 @@ def clean_data(
             resolved,
             chirality=False,
             extra_id_cols=detected_id_cols,
-            compound_equality="connectivity",
+            compound_equality=compound_col,
         )
         logger.info(f"Re-aggregated to {len(df)} rows")
         rows_after_annotation = len(df)
 
     # Step 3: Drop flags (measurement-level for aggregated data)
     rows_before_flags = len(df)
+    measurements_before_flags = _count_measurements(df, value_col)
+    omission_summary = None
     if drop_flags:
+        omission_summary = summarize_flags(df, flags=drop_flags, per_measurement=True)
         df = filter_aggregated_dropping_flags(df, drop_flags, value_column=value_col)
 
     # Log consolidated summary
@@ -161,9 +174,31 @@ def clean_data(
         rows_removed_by_flags = rows_before_flags - len(df)
         lines.append(f"  After flag filtering:      {len(df):>8,}  (removed {rows_removed_by_flags} rows)")
     lines.append(f"  Final rows:                {len(df):>8,}")
+
+    if omission_summary is not None:
+        lines.append("")
+        lines.append(
+            format_flag_summary(
+                omission_summary,
+                title=(
+                    f"OMITTED BY QUALITY FLAGS — share of {measurements_before_flags:,} "
+                    "measurements pooled in the input"
+                ),
+            )
+        )
     logger.info("\n".join(lines))
 
+    shared_key = (compound_col, "target_chembl_id")
+    if set(shared_key).issubset(df.columns):
+        df = assign_shared_identifier_groups(df, key_columns=shared_key)
     return df
+
+
+def _count_measurements(df: pd.DataFrame, value_col: str, sep_str: str = "|") -> int:
+    """Count the individual measurements pooled in a value column."""
+    if value_col not in df.columns or len(df) == 0:
+        return len(df)
+    return int(df[value_col].apply(lambda x: len(str(x).split(sep_str)) if pd.notna(x) else 0).sum())
 
 
 def prepare_multitask_data(
@@ -188,7 +223,8 @@ def prepare_multitask_data(
         df: Aggregated DataFrame from aggregate_data() with bioactivity statistics.
         task_col: Column to use as task identifier (e.g., "target_chembl_id").
         value_col: Column containing values to pivot (e.g., "pchembl_value_mean").
-        compound_col: Column for compound identity (e.g., "connectivity" or "smiles").
+        compound_col: Column defining compound identity (for example, ``connectivity``,
+            ``inchi``, ``inchikey``, or ``smiles``).
         smiles_col: Column containing SMILES strings.
         id_columns: List of additional columns to combine with task_col for creating
             composite task identifiers. Use this when data was aggregated with
@@ -229,8 +265,9 @@ def prepare_multitask_data(
         n_extra_rows = duplicates.sum() - n_dup_pairs
         logger.warning(
             f"Found {n_dup_pairs} compound-task pairs with multiple values ({n_extra_rows} extra rows). "
-            f"Only the first value will be kept. "
-            f"If your data was aggregated with --id-columns, use the same columns here via --id-columns."
+            "Only the first value will be kept. If the rows were kept separate by mutation or "
+            "--id-columns during aggregation, include those distinguishing columns here via --id-columns. "
+            "Inspect shared_identifier_group in CAPRICHO output to identify the affected groups."
         )
 
     # Pivot the data to create activity matrix
