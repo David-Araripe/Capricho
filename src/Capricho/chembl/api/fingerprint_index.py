@@ -1,9 +1,10 @@
 """Module holding access to the fingerprint index used for ChEMBL similarity searches.
 
-ChEMBL publishes an FPSim2 index alongside every release: 2048-bit, radius 2 Morgan
+Recent ChEMBL releases publish an FPSim2 index: 2048-bit, radius 2 Morgan
 fingerprints calculated with RDKit over each entry of ``compound_structures``, keyed by
 ``molregno``. Reusing that file avoids recomputing fingerprints for the ~2.9M structures in
-ChEMBL and keeps similarity results identical to the ones served by the ChEMBL web interface.
+ChEMBL. Scores depend on query preparation and RDKit compatibility with the published index;
+reusing the index alone does not guarantee identical results to the ChEMBL web interface.
 
 FPSim2 is an optional dependency; install it with ``pip install capricho[similarity]``.
 
@@ -18,11 +19,6 @@ from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-# chembl_downloader has no public accessor for the .h5 asset; `_download_helper` builds the release
-# URL and stores the file through pystow, the same way `download_fps` does for .fps.gz. Kept at
-# module level so the private surface this package depends on is visible in one grep.
-from chembl_downloader.api import _download_helper
 
 from ...logger import logger
 from .downloader import check_and_download_chembl_db
@@ -43,6 +39,29 @@ def _require_fpsim2():
     except ImportError as exc:
         raise ImportError(FPSIM2_INSTALL_HINT) from exc
     return FPSim2Engine
+
+
+def _download_fingerprint_asset(configs: dict) -> Path:
+    """Isolate the downloader's private .h5 API, which has no public equivalent.
+
+    Import lazily so a change to this optional boundary cannot prevent structure-only searches.
+    Contract tests verify the release, cache prefix, and options forwarded to the downloader.
+    """
+    try:
+        from chembl_downloader.api import _download_helper
+    except ImportError as exc:
+        raise ImportError(
+            "The installed chembl_downloader cannot download FPSim2 indexes. "
+            "Upgrade it with `pip install --upgrade chembl_downloader`."
+        ) from exc
+    return Path(
+        _download_helper(
+            suffix=".h5",
+            version=configs["version"],
+            prefix=configs["prefix"],
+            return_version=False,
+        )
+    )
 
 
 def check_and_download_fingerprint_index(
@@ -66,12 +85,7 @@ def check_and_download_fingerprint_index(
     configs = check_and_download_chembl_db(prefix=prefix, version=version)
 
     try:
-        fp_path = _download_helper(
-            suffix=".h5",
-            version=configs["version"],
-            prefix=configs["prefix"],
-            return_version=False,
-        )
+        fp_path = _download_fingerprint_asset(configs)
     except ValueError as exc:
         raise FileNotFoundError(
             f"Could not obtain the ChEMBL fingerprint index for version {configs['version']}. "

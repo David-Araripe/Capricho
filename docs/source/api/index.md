@@ -57,11 +57,54 @@ Functions that flag (rather than remove) problematic data entries.
    :show-inheritance:
 ```
 
+(structure-search)=
 ## Structure Search
 
 Find compounds in ChEMBL starting from a SMILES string, either by structure identity or by
 fingerprint similarity across the whole database. Similarity search requires the optional
 `similarity` extra (see [Installation](../installation.md)).
+
+These searches are available through Python; there is no CLI search command. Pass an explicit
+ChEMBL release to reuse cached data without checking the latest release:
+
+```python
+from Capricho.chembl.similarity import search_by_similarity, search_by_structure
+
+identity = search_by_structure(["CCO", "[13CH3]CO", ""], standardize=False, version=37)
+hits = search_by_similarity(["CCO", "CCO"], threshold=0.7, top_k=10, version=37)
+query_records = hits.groupby("query_index")  # retains repeated input occurrences
+provenance = hits.attrs["capricho_search"]
+```
+
+With default standardization, identity means an InChIKey match **after** the ChEMBL parent
+pipeline strips salts, neutralizes compounds and removes isotope labels. Use
+`standardize=False` to preserve those details in the query key. Invalid and empty inputs retain
+an unmatched row. A similarity score of 1.0 is a fingerprint match and does not establish
+molecular identity or stereochemical equality.
+
+Search results keep the zero-based input position in `query_index`. Their
+`attrs["capricho_search"]` dictionary records the resolved ChEMBL release and software versions;
+similarity searches also record fingerprint parameters and the versions used to build the
+index. DataFrame attributes are not saved in CSV, so save provenance separately:
+
+```python
+import json
+from pathlib import Path
+
+hits.to_csv("similarity_hits.csv", index=False)
+Path("similarity_hits.provenance.json").write_text(json.dumps(provenance, indent=2))
+```
+
+On-disk searches with `n_workers > 1` use multiprocessing. Use `n_workers=1` in notebooks and
+stdin sessions. For multiple on-disk workers on platforms using spawn, run from a Python file
+with an importable entry point and a main guard:
+
+```python
+from Capricho.chembl.similarity import search_by_similarity
+
+if __name__ == "__main__":
+    hits = search_by_similarity("CCO", top_k=10, in_memory=False, n_workers=2, version=37)
+```
 
 ```{eval-rst}
 .. automodule:: Capricho.chembl.similarity
@@ -141,4 +184,5 @@ Tools for data quality analysis and comparability studies.
 
 ---
 
-*Note: API documentation is automatically generated from docstrings in the source code. For the most comprehensive and up-to-date information, refer to the [CLI Reference](../cli-reference.md) which exposes all functionality.*
+*API documentation is generated from source docstrings. See the [CLI Reference](../cli-reference.md)
+for functionality exposed as commands; local structure and similarity searches use the Python API.*

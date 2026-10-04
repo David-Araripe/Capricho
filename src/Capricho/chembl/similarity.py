@@ -3,27 +3,32 @@
 Three routes are available. :func:`search_by_structure` resolves a SMILES to the ChEMBL entries
 describing the same molecule, :func:`search_by_similarity` ranks the whole database by
 fingerprint similarity, and :func:`get_and_curate_chembl_compounds` queries the ChEMBL web API.
-The first two run against the local database; once it is downloaded their only network access is
-resolving which ChEMBL release is latest, which passing ``version=`` avoids entirely.
+The first two run against the local database. Once the database and, for similarity searches,
+the fingerprint index are cached, passing ``version=`` avoids all network access.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from numbers import Integral
 
 import numpy as np
 import pandas as pd
 from chemFilters.chem.standardizers import ChemStandardizer, InchiHandling
 from rdkit import Chem
+from rdkit import __version__ as rdkit_version
 
+from .. import __version__ as capricho_version
 from ..core.fp_utils import calculate_mixed_FPs
 from ..core.smiles_utils import clean_mixtures
 from ..core.stats_make import repeated_indices_from_array_series
 from ..logger import logger
 from .api.downloader import (
     COMPOUND_HIT_COLUMNS,
+    _latest_version,
     get_compounds_by_inchikey_sql,
     get_compounds_by_molregno_sql,
 )
@@ -123,6 +128,32 @@ def _as_smiles_list(smiles: str | Sequence[str]) -> list[str]:
     return list(smiles)
 
 
+def _parse_query_smiles(smi: str) -> Chem.Mol | None:
+    """Keep unusable inputs out of standardization and fingerprint generation."""
+    if not isinstance(smi, str):
+        logger.warning(f"Structure search requires a SMILES string, got {smi!r}")
+        return None
+    try:
+        mol = Chem.MolFromSmiles(smi)
+    except (RuntimeError, ValueError) as exc:
+        logger.warning(f"Could not parse the query SMILES {smi!r}: {exc}")
+        return None
+    if mol is None or mol.GetNumAtoms() == 0:
+        logger.warning(f"Could not parse a non-empty molecule from the query SMILES: {smi!r}")
+        return None
+    return mol
+
+
+def _search_provenance(version: int | str | None, **settings) -> dict:
+    """Record the resolved release and settings without resolving unused databases."""
+    return {
+        "capricho_version": capricho_version,
+        "chembl_version": str(version) if version is not None else None,
+        "rdkit_version": rdkit_version,
+        **settings,
+    }
+
+
 def _describe_queries(smiles: list[str], standardize: bool, chirality: bool, n_jobs: int) -> pd.DataFrame:
     """Build the query frame holding, per input SMILES, the structure keys used for lookup.
 
@@ -130,13 +161,19 @@ def _describe_queries(smiles: list[str], standardize: bool, chirality: bool, n_j
     Entries RDKit cannot parse keep a null key and are reported as unmatched downstream, rather
     than being dropped.
     """
-    if standardize:
+    unique_inputs = list(dict.fromkeys(smi for smi in smiles if isinstance(smi, str)))
+    parsed = {smi: mol for smi in unique_inputs if (mol := _parse_query_smiles(smi)) is not None}
+    if standardize and parsed:
         stdzer = ChemStandardizer(
-            from_smi=True, n_jobs=n_jobs, verbose=False, isomeric=chirality, progress=False
+            from_smi=False, n_jobs=n_jobs, verbose=False, isomeric=chirality, progress=False
         )
-        standard_smiles = [clean_mixtures(smi) if isinstance(smi, str) else None for smi in stdzer(smiles)]
+        standardized = {
+            original: clean_mixtures(smi) if isinstance(smi, str) else None
+            for original, smi in zip(parsed, stdzer(list(parsed.values())))
+        }
     else:
-        standard_smiles = list(smiles)
+        standardized = {smi: smi for smi in parsed}
+    standard_smiles = [standardized.get(smi) if isinstance(smi, str) else None for smi in smiles]
 
     # Deduplicate before generating keys: repeated SMILES would otherwise cost one InChI
     # conversion each, which dominates the runtime for large query lists.
@@ -174,13 +211,20 @@ def search_by_structure(
     Matching happens on the standard InChI key, reported at two levels of strictness in the
     ``match_type`` column:
 
-    - ``exact``: the full InChI key matches, so stereochemistry, isotopes and protonation state
-      all agree.
+    - ``exact``: the full InChI key of ``standard_smiles`` matches the stored key. This is
+      identity after the selected query normalization, not necessarily identity of the raw input.
     - ``connectivity``: only the first 14 characters match, so the molecular skeleton agrees
       while stereochemistry or isotopic labelling differ. This is the same notion of compound
       equality used by ``capricho get --compound-equality connectivity``.
     - ``no_match``: nothing in ChEMBL matched that query. These rows are kept so that queries
       never disappear silently from the output.
+
+    By default the ChEMBL parent pipeline strips salts, neutralizes compounds, and removes
+    isotope labels before deriving the query key. For example, ``[13CH3]CO`` is normalized to
+    ``CCO`` and can be an exact match to ordinary ethanol. Set ``standardize=False`` to derive
+    keys from the input molecule without those transformations. Standard InChI itself can still
+    normalize tautomeric representations. Setting ``chirality=False`` also removes specified
+    stereochemistry during standardization.
 
     Note that salt and co-crystal entries do not share the connectivity of their parent, since
     the counter-ion is part of the skeleton the InChI key is derived from. A salt-stripped query
@@ -197,8 +241,8 @@ def search_by_structure(
     Args:
         smiles: a single SMILES or a sequence of SMILES to look up.
         standardize: whether to standardize the query with the ChEMBL structure pipeline and
-            strip salts and solvents before deriving keys. Recommended, since ChEMBL stores
-            standardized structures. Defaults to True.
+            strip salts and solvents, neutralize compounds, and remove isotope labels before
+            deriving keys. Set False for identity-sensitive queries. Defaults to True.
         chirality: whether standardization keeps stereochemistry. Only relevant when
             ``standardize`` is True. Defaults to True.
         n_jobs: number of jobs used for standardization and InChI key generation. Defaults to 1.
@@ -206,13 +250,16 @@ def search_by_structure(
         version: Optional ChEMBL version to use. Defaults to the latest available version.
 
     Returns:
-        pd.DataFrame: one row per query/hit pair, with the query columns (query_smiles,
+        pd.DataFrame: one row per query/hit pair, with the query columns (query_index, query_smiles,
         standard_smiles, query_inchikey, connectivity), the ``match_type`` label and the hit
         columns (molecule_chembl_id, molregno, canonical_smiles, standard_inchi_key,
-        parent_chembl_id, parent_smiles).
+        parent_chembl_id, parent_smiles). ``query_index`` is the zero-based input position,
+        including repeated queries. ``attrs['capricho_search']`` records the resolved release,
+        software versions and normalization settings; an unused release remains None.
     """
     query_list = _as_smiles_list(smiles)
     output_columns = [
+        "query_index",
         "query_smiles",
         "standard_smiles",
         "query_inchikey",
@@ -220,7 +267,11 @@ def search_by_structure(
         "match_type",
     ] + COMPOUND_HIT_COLUMNS
     if not query_list:
-        return pd.DataFrame(columns=output_columns)
+        result = pd.DataFrame(columns=output_columns)
+        result.attrs["capricho_search"] = _search_provenance(
+            version, search_type="structure", standardize=standardize, chirality=chirality
+        )
+        return result
 
     queries = _describe_queries(query_list, standardize, chirality, n_jobs)
 
@@ -229,6 +280,7 @@ def search_by_structure(
         logger.warning("None of the query SMILES could be resolved to an InChI key.")
         hits = pd.DataFrame(columns=COMPOUND_HIT_COLUMNS)
     else:
+        version = version if version is not None else _latest_version()
         # Only the connectivities are needed: every full key starts with its own connectivity, so
         # an exact-key clause would match a strict subset of what the prefix scan already returns.
         hits = get_compounds_by_inchikey_sql(
@@ -262,7 +314,11 @@ def search_by_structure(
         f"to {len(matched)} ChEMBL compounds."
     )
 
-    return result[output_columns]
+    result = result.rename(columns={"_query_index": "query_index"})[output_columns]
+    result.attrs["capricho_search"] = _search_provenance(
+        version, search_type="structure", standardize=standardize, chirality=chirality
+    )
+    return result
 
 
 def search_by_similarity(
@@ -284,6 +340,10 @@ def search_by_similarity(
     matching how the index itself was built, so they are deliberately not run through the
     Capricho standardization pipeline.
 
+    Scores describe fingerprint similarity, not molecular identity: distinct compounds can
+    score 1.0. The published Morgan index is not sensitive to stereochemistry. Query fingerprints
+    use the installed RDKit; changes since the version that built the index may affect scores.
+
     Usage:
 
     >>> from Capricho.chembl.similarity import search_by_similarity
@@ -296,19 +356,25 @@ def search_by_similarity(
         top_k: if given, keep only the k most similar compounds per query. The threshold still
             applies, so fewer than k compounds may be returned. Defaults to None.
         metric: similarity metric, one of "tanimoto", "dice" or "cosine". Defaults to "tanimoto".
-        n_workers: threads used to split a single query across cores. Defaults to 1.
+        n_workers: workers used to split a single query across cores. In-memory searches use
+            threads; on-disk searches use processes. On-disk searches with more than one worker
+            require an importable Python entry point, guarded by ``if __name__ == '__main__':``
+            on platforms using spawn. Use one worker in notebooks and stdin sessions. Defaults to 1.
         in_memory: whether to load the index into memory (~1 GB) instead of searching from disk.
             Defaults to True.
         prefix: Optional prefix for an alternative data directory.
         version: Optional ChEMBL version to use. Defaults to the latest available version.
 
     Returns:
-        pd.DataFrame: one row per query/hit pair with query_smiles, similarity and the hit
+        pd.DataFrame: one row per query/hit pair with query_index, query_smiles, similarity and the hit
         columns (molecule_chembl_id, molregno, canonical_smiles, standard_inchi_key,
         parent_chembl_id, parent_smiles), sorted by descending similarity within each query.
         A query with no hit above the threshold, or one RDKit cannot parse, keeps a single row
         with null hit columns, so every input is accounted for in the output. Drop them with
-        ``.dropna(subset=["molecule_chembl_id"])``.
+        ``.dropna(subset=["molecule_chembl_id"])``. ``query_index`` is the zero-based input
+        position. Repeated SMILES are searched once, retaining a result set for each occurrence.
+        ``attrs['capricho_search']`` records the resolved release, search settings, fingerprint
+        parameters and software versions. Save these attributes separately when exporting CSV.
     """
     if not 0 < threshold <= 1:
         raise ValueError(f"'threshold' must be greater than 0 and at most 1, got {threshold}")
@@ -320,27 +386,34 @@ def search_by_similarity(
         raise ValueError(f"'metric' must be one of {sorted(SIMILARITY_METRICS)}, got {metric!r}")
 
     query_list = _as_smiles_list(smiles)
+    output_columns = ["query_index", "query_smiles", "similarity"] + COMPOUND_HIT_COLUMNS
+    provenance = _search_provenance(
+        version, search_type="similarity", threshold=threshold, top_k=top_k, metric=metric
+    )
     if not query_list:
-        return pd.DataFrame(columns=["query_smiles", "similarity"] + COMPOUND_HIT_COLUMNS)
+        result = pd.DataFrame(columns=output_columns)
+        result.attrs["capricho_search"] = provenance
+        return result
 
-    parsed_queries = []
-    for query_index, smi in enumerate(query_list):
-        if not isinstance(smi, str):
-            logger.warning(f"Similarity search requires a SMILES string, got {smi!r}")
-            continue
-        try:
-            query_mol = Chem.MolFromSmiles(smi)
-        except (RuntimeError, ValueError) as exc:
-            logger.warning(f"Could not parse the query SMILES {smi!r}: {exc}")
-            continue
-        if query_mol is None or query_mol.GetNumAtoms() == 0:
-            logger.warning(f"Could not parse a non-empty molecule from the query SMILES: {smi!r}")
-            continue
-        parsed_queries.append((query_index, smi, query_mol))
+    unique_inputs = list(dict.fromkeys(smi for smi in query_list if isinstance(smi, str)))
+    parsed_queries = {smi: mol for smi in unique_inputs if (mol := _parse_query_smiles(smi)) is not None}
 
     searches = []
     if parsed_queries:
+        version = version if version is not None else _latest_version()
         engine = load_fingerprint_index(prefix=prefix, version=version, in_memory=in_memory)
+        try:
+            fpsim2_version = package_version("FPSim2")
+        except PackageNotFoundError:
+            fpsim2_version = None
+        provenance.update(
+            chembl_version=str(version),
+            fpsim2_version=fpsim2_version,
+            fp_type=engine.fp_type,
+            fp_params=dict(engine.fp_params),
+            index_rdkit_version=engine.rdkit_ver,
+            index_fpsim2_version=engine.fpsim2_ver,
+        )
 
         # Both choices are fixed for the whole call, so resolve the engine method once and leave
         # the loop to deal with results only.
@@ -350,7 +423,7 @@ def search_by_similarity(
         if top_k is not None:
             search_kwargs["k"] = top_k
 
-        for query_index, smi, query_mol in parsed_queries:
+        for smi, query_mol in parsed_queries.items():
             # Passing the parsed molecule means invalid input is handled above while index, I/O,
             # and worker failures propagate instead of being misreported as an unmatched query.
             found = search(query_mol, **search_kwargs)
@@ -360,13 +433,13 @@ def search_by_similarity(
             searches.append(
                 pd.DataFrame(found)
                 .rename(columns={"mol_id": "molregno", "coeff": "similarity"})
-                .assign(_query_index=query_index, query_smiles=smi)
+                .assign(query_smiles=smi)
             )
 
     hits = (
         pd.concat(searches, ignore_index=True)
         if searches
-        else pd.DataFrame(columns=["_query_index", "query_smiles", "molregno", "similarity"])
+        else pd.DataFrame(columns=["query_smiles", "molregno", "similarity"])
     )
     molregnos = hits["molregno"].unique().tolist()
     compounds = (
@@ -376,11 +449,11 @@ def search_by_similarity(
     )
     hits = hits.merge(compounds.reindex(columns=COMPOUND_HIT_COLUMNS), on="molregno", how="left")
 
-    # Merge on a per-occurrence identifier, rather than SMILES text, so duplicate queries do not
-    # create a Cartesian product. The identifier also preserves the caller's input order.
+    # Each unique SMILES owns one hit set. Expand it back to every input occurrence and retain
+    # the position so callers can join results to their original query records.
     result = (
         pd.DataFrame({"_query_index": range(len(query_list)), "query_smiles": query_list})
-        .merge(hits, on=["_query_index", "query_smiles"], how="left")
+        .merge(hits, on="query_smiles", how="left")
         .sort_values(["_query_index", "similarity"], ascending=[True, False], kind="stable")
         .reset_index(drop=True)
     )
@@ -392,4 +465,6 @@ def search_by_similarity(
         f"at a {metric} threshold of {threshold}."
     )
 
-    return result[["query_smiles", "similarity"] + COMPOUND_HIT_COLUMNS]
+    result = result.rename(columns={"_query_index": "query_index"})[output_columns]
+    result.attrs["capricho_search"] = provenance
+    return result

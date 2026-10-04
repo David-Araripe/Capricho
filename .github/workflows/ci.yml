@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, feat/structure-similarity-search ]
   pull_request:
     branches: [ master ]
 
@@ -60,11 +60,12 @@ jobs:
         report_paths: 'test_report.xml'
 
   tests-similarity:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       matrix:
         python-version: ['3.10', '3.12']
+        os: [ubuntu-latest, macos-latest]
 
     steps:
     - uses: actions/checkout@v6

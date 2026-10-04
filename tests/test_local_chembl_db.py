@@ -283,6 +283,10 @@ class TestQueryRegisteredDatabase(LocalDatabaseTestCase):
         from Capricho.chembl.similarity import search_by_similarity
 
         engine = Mock()
+        engine.fp_type = "Morgan"
+        engine.fp_params = {"radius": 2, "fpSize": 2048}
+        engine.rdkit_ver = "2022.09.4"
+        engine.fpsim2_ver = "0.7.3"
         engine.similarity.return_value = np.array([(1, 1.0)], dtype=[("mol_id", "<i8"), ("coeff", "<f8")])
         set_chembl_db_path(self.make_db("36"))
 

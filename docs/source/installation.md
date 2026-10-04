@@ -48,6 +48,17 @@ structure with {func}`Capricho.chembl.similarity.search_by_structure` works with
 On Python 3.10, pip resolves to FPSim2 0.7.3, the last release supporting that interpreter;
 Python 3.11 and later get the current release.
 
+The first similarity search downloads the selected release's SQLite database and FPSim2
+`.h5` index if they are not cached. Registering an existing SQLite database avoids its download,
+but the fingerprint index must still be cached or downloaded separately. Subsequent searches
+can run offline when both files are present and `version=` is explicit. Recent releases publish
+the index; older releases may not provide one.
+
+The default loads fingerprints into memory (roughly 1 GB). Use `in_memory=False` to search
+from disk. Keep `n_workers=1` in notebooks; multiple on-disk workers require an importable,
+guarded Python entry point. See {ref}`Structure Search <structure-search>` for examples,
+normalization behavior and result provenance.
+
 ## From GitHub (Development Version)
 
 Swap `capricho` for the repository URL in any of the commands above:
