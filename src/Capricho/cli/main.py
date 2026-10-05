@@ -508,7 +508,9 @@ def get_data(
         typer.Option(
             "-chiral/-no-chiral",
             "--chirality/--no-chirality",
-            help="Consider chirality during fingerprint calculation.",
+            help="Preserve stereochemistry during standardization and use chiral Morgan fingerprints "
+            "for mixed_fp. inchi, inchikey, and smiles always preserve specified stereo; "
+            "connectivity always merges stereoisomers.",
             is_flag=True,
             metavar="bool",
         ),
@@ -602,6 +604,7 @@ def get_data(
     from chembl_downloader import latest
 
     from .chembl_data_pipeline import (
+        STEREO_SENSITIVE_EQUALITY_METHODS,
         _log_pipeline_summary,
         aggregate_data,
         get_standardize_and_clean_workflow,
@@ -631,12 +634,14 @@ def get_data(
             "Some%20duplicates%20were,for%20kinetic%20solubility."
         )
 
+    # Aggregation cannot recover stereochemistry removed during standardization.
+    preserve_stereo = chirality or compound_equality.value in STEREO_SENSITIVE_EQUALITY_METHODS
     pre_agg_df = get_standardize_and_clean_workflow(
         molecule_ids=molecule_ids or [],
         target_ids=target_ids or [],
         assay_ids=assay_ids or [],
         document_ids=document_ids or [],
-        chirality=chirality,
+        chirality=preserve_stereo,
         calculate_pchembl=calculate_pchembl,
         output_path=output_path,
         confidence_scores=confidence_scores,

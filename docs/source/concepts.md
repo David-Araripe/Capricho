@@ -6,6 +6,12 @@ Understanding these core concepts will help you use CAPRICHO effectively and mak
 
 One of the most important decisions in bioactivity data analysis is determining when two compound entries represent the same molecule.
 
+In `capricho get`, selecting `inchi`, `inchikey`, or `smiles` automatically preserves specified stereochemistry
+during standardization and aggregation, including when `--no-chirality` is set (the CLI
+default). For `mixed_fp`, use `--chirality` to preserve stereochemistry during standardization
+and enable chiral Morgan fingerprints. `connectivity` merges stereoisomers regardless of
+the chirality flag.
+
 ### Connectivity-Based (Default)
 
 The `connectivity` method identifies compounds by their molecular graph. It's based on the first 14 characters of the InChIKey, which encode atom connectivity but ignore stereochemistry and tautomerism:

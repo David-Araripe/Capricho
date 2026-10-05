@@ -28,6 +28,7 @@ dependencies = [
   "pandas >= 2.2.3",
   "numpy",
   "loguru",
+  "matplotlib",
   "scipy",
   "tqdm",
   "joblib",

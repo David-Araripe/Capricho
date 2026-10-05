@@ -1,0 +1,2 @@
+# We consider the notebooks to be part of the documentation; not consider for code statistics
+notebooks/*
