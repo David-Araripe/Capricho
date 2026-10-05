@@ -230,7 +230,7 @@ class TestSmilesUtils(unittest.TestCase):
             (self.NEOSTIGMINE + ".c1ccc([B-](c2ccccc2)(c2ccccc2)c2ccccc2)cc1", self.NEOSTIGMINE, "tetraphenylborate | closest analog: quaternary ammonium tetraphenylborate"),
             (self.PARACETAMOL + ".O", self.PARACETAMOL, "water (hydrate) | paracetamol hemihydrate"),
             (self.PARACETAMOL + ".N", self.PARACETAMOL, "ammonia | ammonia adduct/solvate"),
-        ]
+        ] # fmt: skip
         for input_smiles, expected_parent, description in cases:
             with self.subTest(salt=description):
                 self.assertEqual(smiles_utils.clean_mixtures(input_smiles), expected_parent)
