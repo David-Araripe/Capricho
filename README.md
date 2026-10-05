@@ -33,7 +33,9 @@ The development of CAPRICHO is guided by two core principles:
 
 ## ⚙️ Installation
 
-With pip, into the environment you work in — the `capricho` command comes with it:
+> Capricho requires Python 3.11 or later; CI tests Python 3.11–3.14.
+
+With pip, in the environment you work in (the `capricho` command comes with it):
 
 ```shell
 python -m pip install capricho

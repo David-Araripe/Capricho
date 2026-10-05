@@ -1,13 +1,12 @@
 """Module for stereochemistry related functions"""
 
-from typing import List, Union
 
 from rdkit import Chem
 
 from ..logger import logger
 
 
-def find_undefined_stereocenters(_input: Union[Chem.Mol | str]) -> List[int]:
+def find_undefined_stereocenters(_input: Chem.Mol | str) -> list[int]:
     """
     Find atoms that are stereocenters but have undefined chirality.
 
@@ -40,7 +39,7 @@ def find_undefined_stereocenters(_input: Union[Chem.Mol | str]) -> List[int]:
         return []
 
     undefined_stereo = []  # find atoms with undefined stereochemistry
-    for atom_idx, chirality in chiral_centers:
+    for atom_idx, _chirality in chiral_centers:
         atom = mol.GetAtomWithIdx(atom_idx)
         if atom.GetChiralTag() == Chem.ChiralType.CHI_UNSPECIFIED:
             undefined_stereo.append(atom_idx)

@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
 
 from abc import ABC
-from typing import Optional
 from urllib.parse import urljoin
 
 import requests
@@ -116,7 +114,7 @@ class UniChem(BaseUniChem):
         self,
         compound,
         id_type="inchikey",
-        source_id: Optional[int] = None,
+        source_id: int | None = None,
         search_components: bool = True,
         save_searched: bool = False,
     ):
