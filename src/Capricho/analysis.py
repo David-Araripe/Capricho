@@ -31,6 +31,7 @@ class ProcessingComment(str, Enum):
 
     CALCULATED_PCHEMBL = "Calculated pChEMBL"
     SALT_SOLVENT_REMOVED = "Salt/solvent removed"
+    STEREOCHEMISTRY_REMOVED = "Stereochemistry removed"
     PCHEMBL_DUPLICATION_ACROSS_DOCUMENTS = "pChEMBL Duplication Across Documents"
     UNIT_CONVERTED = "Unit converted to"  # Example: "Unit converted to nM from uM"
 
@@ -130,6 +131,7 @@ def get_all_comments() -> list[str]:
         ProcessingComment.CALCULATED_PCHEMBL.value,
         ProcessingComment.PCHEMBL_DUPLICATION_ACROSS_DOCUMENTS.value,
         ProcessingComment.UNIT_CONVERTED.value,
+        ProcessingComment.STEREOCHEMISTRY_REMOVED.value,
     ]
 
 

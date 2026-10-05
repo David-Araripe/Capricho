@@ -31,7 +31,7 @@ DEFAULTS = {
     "output_path": "chembl_data.csv",
     "confidence_scores": [7, 8, 9],
     "bioactivity_type": ["Potency", "Kd", "Ki", "IC50", "AC50", "EC50"],
-    "chirality": False,
+    "chirality": True,
     "drop_unassigned_chiral": False,
     "curate_annotation_errors": True,
     "standard_relation": ["="],
@@ -57,7 +57,6 @@ DEFAULTS = {
 
 DEFAULT_FALSE_ARGS = [
     "calculate_pchembl",
-    "chirality",
     "drop_unassigned_chiral",
     "skip_not_aggregated",
     "aggregate_mutants",
@@ -67,6 +66,7 @@ DEFAULT_FALSE_ARGS = [
 ]
 
 DEFAULT_TRUE_ARGS = [
+    "chirality",
     "curate_annotation_errors",
 ]
 
@@ -509,7 +509,8 @@ def get_data(
             "-chiral/-no-chiral",
             "--chirality/--no-chirality",
             help="Preserve stereochemistry during standardization and use chiral Morgan fingerprints "
-            "for mixed_fp. inchi, inchikey, and smiles always preserve specified stereo; "
+            "for mixed_fp (enabled by default). --no-chirality removes stereo before matching "
+            "with any equality method; "
             "connectivity always merges stereoisomers.",
             is_flag=True,
             metavar="bool",
@@ -604,7 +605,6 @@ def get_data(
     from chembl_downloader import latest
 
     from .chembl_data_pipeline import (
-        STEREO_SENSITIVE_EQUALITY_METHODS,
         _log_pipeline_summary,
         aggregate_data,
         get_standardize_and_clean_workflow,
@@ -634,14 +634,12 @@ def get_data(
             "Some%20duplicates%20were,for%20kinetic%20solubility."
         )
 
-    # Aggregation cannot recover stereochemistry removed during standardization.
-    preserve_stereo = chirality or compound_equality.value in STEREO_SENSITIVE_EQUALITY_METHODS
     pre_agg_df = get_standardize_and_clean_workflow(
         molecule_ids=molecule_ids or [],
         target_ids=target_ids or [],
         assay_ids=assay_ids or [],
         document_ids=document_ids or [],
-        chirality=preserve_stereo,
+        chirality=chirality,
         calculate_pchembl=calculate_pchembl,
         output_path=output_path,
         confidence_scores=confidence_scores,
@@ -692,11 +690,15 @@ def get_data(
                 else:  # safe to assume latest version; if None, chembl_downloader gets latest
                     command_vals.append(f"--{save_k} {latest()}")
             elif isinstance(v, Path) or isinstance(v, Enum):
-                configs[k] = str(v)  # Convert Path and Enum to string for JSON serialization
-                if DEFAULTS[k] is not v:
-                    command_vals.append(f"--{save_k} {str(v)}")
+                serialized_value = v.value if isinstance(v, Enum) else str(v)
+                configs[k] = serialized_value
+                if DEFAULTS[k] != serialized_value:
+                    command_vals.append(f"--{save_k} {serialized_value}")
             elif isinstance(v, bool):
-                if k in DEFAULT_FALSE_ARGS and v is not False:
+                if k == "chirality":
+                    # Make the stereo policy explicit even when it matches the default.
+                    command_vals.append("--chirality" if v else "--no-chirality")
+                elif k in DEFAULT_FALSE_ARGS and v is not False:
                     command_vals.append((f"--{save_k}"))
                 elif k in DEFAULT_TRUE_ARGS and v is not True:
                     command_vals.append(f"--dont-{save_k}")

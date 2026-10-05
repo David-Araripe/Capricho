@@ -144,7 +144,8 @@ def clean_data(
 
         df = re_aggregate_data(
             resolved,
-            chirality=False,
+            # Retain the input stereo policy; already stripped structures stay stripped.
+            chirality=True,
             extra_id_cols=detected_id_cols,
             compound_equality=compound_col,
         )

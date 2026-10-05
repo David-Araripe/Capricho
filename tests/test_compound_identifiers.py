@@ -1,4 +1,6 @@
 import io
+import json
+import shlex
 import warnings
 
 import pandas as pd
@@ -11,7 +13,7 @@ from Capricho.cli.chembl_data_pipeline import (
     aggregate_data,
     re_aggregate_data,
 )
-from Capricho.cli.prepare import prepare_multitask_data
+from Capricho.cli.prepare import clean_data, prepare_multitask_data
 from Capricho.logger import logger
 
 
@@ -33,7 +35,7 @@ def _stereoisomer_source():
 
 @pytest.mark.parametrize("identifier", ["inchi", "inchikey"])
 def test_aggregate_data_supports_full_inchi_identifiers(identifier):
-    result = aggregate_data(_stereoisomer_source(), chirality=False, compound_equality=identifier)
+    result = aggregate_data(_stereoisomer_source(), chirality=True, compound_equality=identifier)
 
     assert len(result) == 2
     assert result.columns[:2].tolist() == ["connectivity", identifier]
@@ -61,6 +63,27 @@ def test_connectivity_equality_merges_stereoisomers():
     result = aggregate_data(_stereoisomer_source(), chirality=False, compound_equality="connectivity")
 
     assert len(result) == 1
+
+
+@pytest.mark.parametrize("identifier", ["connectivity", "inchi", "inchikey", "smiles", "mixed_fp"])
+@pytest.mark.parametrize("chirality", [False, True])
+def test_racemic_warning_only_for_stereo_insensitive_aggregation(identifier, chirality):
+    source = _stereoisomer_source()
+    # Identical structures ensure both stereo-aware and insensitive modes aggregate.
+    source["standard_smiles"] = "C[C@H](O)Cl"
+    source["canonical_smiles"] = source["standard_smiles"]
+    result = aggregate_data(source, chirality=chirality, compound_equality=identifier)
+    expects_warning = identifier == "connectivity" or not chirality
+    assert ("might_be_racemic" in result.columns) == expects_warning
+    if expects_warning:
+        assert result["might_be_racemic"].all()
+
+    reaggregated = re_aggregate_data(
+        deaggregate_data(result), chirality=chirality, compound_equality=identifier
+    )
+    assert ("might_be_racemic" in reaggregated.columns) == expects_warning
+    if expects_warning:
+        assert reaggregated["might_be_racemic"].all()
 
 
 @pytest.mark.parametrize("identifier", ["connectivity", "inchi", "inchikey"])
@@ -201,7 +224,6 @@ def test_cli_stereo_policy_before_aggregation(fetched_stereoisomers, tmp_path, i
             "37",
             "--compound-equality",
             identifier,
-            "--skip-recipe",
             "-o",
             str(output),
             *flags,
@@ -209,7 +231,7 @@ def test_cli_stereo_policy_before_aggregation(fetched_stereoisomers, tmp_path, i
     )
 
     assert result.exit_code == 0, (result.output, result.exception)
-    preserves_stereo = identifier in {"inchi", "inchikey", "smiles"} or "--chirality" in flags
+    preserves_stereo = "--no-chirality" not in flags
     standardized = pd.read_csv(tmp_path / "stereoisomers_not_aggregated.csv")
     assert len(standardized) == 2
     assert dict(zip(standardized["molecule_chembl_id"], standardized["pchembl_value"])) == {
@@ -238,8 +260,82 @@ def test_cli_stereo_policy_before_aggregation(fetched_stereoisomers, tmp_path, i
         # Pin the current geometric-mean aggregation policy, not just the row count.
         assert merged["pchembl_value_mean"] == pytest.approx((6.0 * 7.0) ** 0.5)
     if identifier in {"inchi", "inchikey", "smiles"}:
-        assert aggregated[identifier].nunique() == 2
+        assert aggregated[identifier].nunique() == (2 if separates_stereo else 1)
     if identifier == "inchi":
-        assert aggregated[identifier].str.contains("/t").all()
+        assert aggregated[identifier].str.contains("/t").eq(separates_stereo).all()
     elif identifier == "inchikey":
-        assert aggregated[identifier].str.split("-").str[1].nunique() == 2
+        assert aggregated[identifier].str.split("-").str[1].nunique() == (2 if separates_stereo else 1)
+
+    recipe = json.loads((tmp_path / "stereoisomers_recipe.json").read_text())
+    assert recipe["chirality"] == preserves_stereo
+    assert recipe["compound_equality"] == identifier
+    assert "CompoundEquality." not in recipe["command"]
+    assert ("--chirality" if preserves_stereo else "--no-chirality") in recipe["command"]
+    assert "--dont-chirality" not in recipe["command"]
+    replay = CliRunner().invoke(app, shlex.split(recipe["command"])[1:] + ["--skip-recipe"])
+    assert replay.exit_code == 0, (replay.output, replay.exception)
+    pd.testing.assert_frame_equal(pd.read_csv(output), aggregated)
+    # Source structures remain intact, even when their processed forms lose stereo.
+    assert standardized["canonical_smiles"].str.contains("@").all()
+    assert (
+        aggregated["data_processing_comment"]
+        .fillna("")
+        .str.contains("Stereochemistry removed", regex=False)
+        .eq(not separates_stereo)
+        .all()
+    )
+
+
+@pytest.mark.parametrize("identifier", ["connectivity", "inchi", "inchikey", "smiles", "mixed_fp"])
+@pytest.mark.parametrize("chirality", [False, True])
+def test_python_aggregation_stereo_policy_and_input_preservation(identifier, chirality):
+    source = _stereoisomer_source()
+    original = source.copy(deep=True)
+    result = aggregate_data(source, chirality=chirality, compound_equality=identifier)
+    separates_stereo = chirality and identifier != "connectivity"
+    assert len(result) == (2 if separates_stereo else 1)
+    assert result["smiles"].str.contains("@").eq(separates_stereo).all()
+    assert ("might_be_racemic" in result.columns) == (not separates_stereo)
+    pd.testing.assert_frame_equal(source, original)
+
+    # Start re-aggregation from stereo-preserving data with cached full identifiers.
+    preserved = aggregate_data(source, chirality=True, compound_equality=identifier)
+    measurements = deaggregate_data(preserved)
+    original_measurements = measurements.copy(deep=True)
+    reaggregated = re_aggregate_data(measurements, chirality=chirality, compound_equality=identifier)
+    assert len(reaggregated) == (2 if separates_stereo else 1)
+    assert reaggregated["smiles"].str.contains("@").eq(separates_stereo).all()
+    assert reaggregated["pchembl_value_counts"].sum() == 2
+    pd.testing.assert_frame_equal(measurements, original_measurements)
+    if identifier == "inchi":
+        assert reaggregated[identifier].str.contains("/t").eq(separates_stereo).all()
+    elif identifier == "inchikey":
+        assert reaggregated[identifier].str.split("-").str[1].nunique() == (2 if separates_stereo else 1)
+
+
+@pytest.mark.parametrize("identifier", ["inchi", "inchikey", "smiles", "mixed_fp"])
+def test_no_chirality_collapses_double_bond_stereo(identifier):
+    source = _stereoisomer_source()
+    source["standard_smiles"] = ["F/C=C/F", "F/C=C\\F"]
+    source["canonical_smiles"] = source["standard_smiles"]
+    preserving = aggregate_data(source, chirality=True, compound_equality=identifier)
+    collapsed = aggregate_data(source, chirality=False, compound_equality=identifier)
+    # Morgan fingerprints do not necessarily distinguish geometric stereoisomers.
+    if identifier != "mixed_fp":
+        assert len(preserving) == 2
+    assert len(collapsed) == 1
+    assert not collapsed["smiles"].str.contains(r"[/\\]", regex=True).any()
+    assert collapsed["data_processing_comment"].str.contains("Stereochemistry removed").all()
+
+
+@pytest.mark.parametrize("identifier", ["inchi", "inchikey", "smiles", "connectivity"])
+@pytest.mark.parametrize("chirality", [False, True])
+def test_prepare_annotation_resolution_preserves_input_identity_policy(identifier, chirality):
+    source = _stereoisomer_source()
+    source["year"] = 2024
+    aggregated = aggregate_data(source, chirality=chirality, compound_equality=identifier)
+    cleaned = clean_data(aggregated, compound_col=identifier, resolve_annotation_error="first")
+    separates_stereo = chirality and identifier != "connectivity"
+    assert len(cleaned) == (2 if separates_stereo else 1)
+    assert cleaned["smiles"].str.contains("@").eq(separates_stereo).all()
+    assert cleaned["pchembl_value_counts"].sum() == 2

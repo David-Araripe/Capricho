@@ -143,6 +143,7 @@ for i in $(seq 1 $N_RUNS); do
         --value-column standard_value \
         --id-columns standard_units,assay_cell_type \
         --convert-units \
+        --no-chirality \
         --drop-unassigned-chiral \
         --output-path "$OUTDIR/caco2_a_to_b.csv"
 done
@@ -159,6 +160,7 @@ for i in $(seq 1 $N_RUNS); do
         --value-column standard_value \
         --id-columns standard_units,assay_cell_type \
         --convert-units \
+        --no-chirality \
         --drop-unassigned-chiral \
         --output-path "$OUTDIR/caco2_b_to_a.csv"
 done

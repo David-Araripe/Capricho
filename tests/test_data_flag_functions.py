@@ -4,7 +4,7 @@ import unittest
 
 import pandas as pd
 
-from Capricho.analysis import DroppingComment, get_all_comments
+from Capricho.analysis import DroppingComment, ProcessingComment, get_all_comments
 from Capricho.chembl.data_flag_functions import (
     REVIEW_ACTIVITY_COMMENTS,
     flag_censored_activity_comment,
@@ -12,6 +12,7 @@ from Capricho.chembl.data_flag_functions import (
     flag_insufficient_assay_overlap,
     flag_inter_document_duplication,
     flag_missing_document_date,
+    flag_stereochemistry_removal,
 )
 from Capricho.core.default_fields import DATA_DROPPING_COMMENT
 
@@ -679,6 +680,29 @@ class TestFlagZeroValues(unittest.TestCase):
                        "Zero Value" not in str(result.loc[0, "data_dropping_comment"]))
         # Second row (zero) should be flagged
         self.assertIn("Zero Value", str(result.loc[1, "data_dropping_comment"]))
+
+
+class TestFlagStereochemistryRemoval(unittest.TestCase):
+    def test_only_specified_stereo_is_flagged_and_source_is_unchanged(self):
+        structures = ["C[C@H](O)Cl", "F/C=C/F", "CC(O)Cl", "CCO", None, pd.NA, "", "invalid"]
+        df = pd.DataFrame({"standard_smiles": structures, "data_processing_comment": None})
+        result = flag_stereochemistry_removal(df)
+        flag = ProcessingComment.STEREOCHEMISTRY_REMOVED.value
+        self.assertEqual(result["data_processing_comment"].tolist(), [flag, flag, "", "", "", "", "", ""])
+        self.assertEqual(result["standard_smiles"].tolist(), structures)
+        self.assertNotIn("data_dropping_comment", result.columns)
+        self.assertIn(flag, get_all_comments())
+
+    def test_alternate_column_and_existing_comment(self):
+        df = pd.DataFrame({"canonical_smiles": ["C[C@@H](O)Cl"], "data_processing_comment": ["Existing"]})
+        result = flag_stereochemistry_removal(df, smiles_column="canonical_smiles")
+        self.assertEqual(result["data_processing_comment"].iloc[0], "Existing & Stereochemistry removed")
+
+    def test_empty_dataframe(self):
+        df = pd.DataFrame({"standard_smiles": pd.Series(dtype=str)})
+        result = flag_stereochemistry_removal(df)
+        self.assertTrue(result.empty)
+        self.assertIn("data_processing_comment", result.columns)
 
 
 if __name__ == "__main__":
