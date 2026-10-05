@@ -201,7 +201,7 @@ Control how data is processed and aggregated:
 | `-calc`, `--calculate-pchembl` | Calculate pChEMBL values if not reported. **Required when using censored data** (`--standard-relation` includes `<` or `>`). See [Standard Relations](concepts.md). | `False` |
 | `-vcol`, `--value-column` | Column holding the experimental measurement to summarize (mean/median/std). Use `standard_value` for non-pChEMBL data (e.g., ADMET assays with % inhibition). See [Non-pChEMBL Aggregation](non-pchembl-aggregation). | `pchembl_value` |
 | `-conu`, `--convert-units` | Convert units to standard formats before aggregation. See [Unit Conversion](unit-conversion). | `False` |
-| `-chiral`, `--chirality` | Consider chirality during fingerprint calculation | `False` |
+| `-chiral`, `--chirality` | Preserve stereochemistry during standardization and use chiral Morgan fingerprints for `mixed_fp`. `inchi`, `inchikey`, and `smiles` always preserve specified stereo; `connectivity` always merges stereoisomers. | `False` |
 | `-duchi`, `--drop-unassigned-chiral` | Drop entries with unassigned chiral centers | `False` |
 | `-cure`, `--curate-annotation-errors` | Apply curation for pChEMBL annotation errors | `False` |
 | `-mutagg`, `--aggregate-mutants` | Aggregate data on targets regardless of mutation | `False` |
