@@ -19,7 +19,7 @@ NOTEBOOKS = Path(__file__).resolve().parents[1] / "notebooks"
     ],
 )
 def test_case_study_identity_and_stereo_policies_are_explicit(filename, fetch_count, chirality_flag):
-    notebook = json.loads((NOTEBOOKS / filename).read_text())
+    notebook = json.loads((NOTEBOOKS / filename).read_text(encoding="utf-8"))
     fetches = []
     for cell in notebook["cells"]:
         source = "".join(cell.get("source", []))
@@ -42,7 +42,7 @@ def test_case_study_identity_and_stereo_policies_are_explicit(filename, fetch_co
 
 
 def test_case_study_benchmarks_pin_original_identity_and_chirality():
-    script = (NOTEBOOKS / "performance-profiling" / "benchmark_case_studies.sh").read_text()
+    script = (NOTEBOOKS / "performance-profiling" / "benchmark_case_studies.sh").read_text(encoding="utf-8")
     commands = script.split('"${CAPRICHO[@]}" get \\\n')[1:]
     assert len(commands) == 5
     for index, command in enumerate(commands):
