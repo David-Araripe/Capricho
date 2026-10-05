@@ -1,6 +1,5 @@
 """Module for exceptions in the CompoundMapper package"""
 
-from typing import Optional
 
 
 class BioactivitiesNotFoundError(Exception):
@@ -9,7 +8,7 @@ class BioactivitiesNotFoundError(Exception):
     def __init__(
         self,
         message="No bioactivities found that satisfy the given query parameters",
-        parameters: Optional[dict] = None,
+        parameters: dict | None = None,
     ):
         self.message = f"{message}"
         if parameters is not None:

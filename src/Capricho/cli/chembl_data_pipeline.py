@@ -1,6 +1,6 @@
 from inspect import signature
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Literal
 
 import pandas as pd
 from chemFilters.chem.standardizers import ChemStandardizer
@@ -96,7 +96,7 @@ def _apply_stereochemistry_policy(
         return Chem.MolToSmiles(mol)
 
     unique_smiles = result["standard_smiles"].drop_duplicates()
-    stripped_by_smiles = dict(zip(unique_smiles, unique_smiles.apply(strip_stereo)))
+    stripped_by_smiles = dict(zip(unique_smiles, unique_smiles.apply(strip_stereo), strict=True))
     result["standard_smiles"] = result["standard_smiles"].map(stripped_by_smiles)
     return result
 
@@ -136,7 +136,7 @@ def _identifier_map(smiles: pd.Series, identifier: InChIIdentifier) -> dict:
     """Calculate an identifier once per distinct SMILES string."""
     unique_smiles = smiles.drop_duplicates().tolist()
     identifiers = _convert_smiles_to_identifier(unique_smiles, identifier)
-    return dict(zip(unique_smiles, identifiers))
+    return dict(zip(unique_smiles, identifiers, strict=True))
 
 
 def _connectivity_from_identifier(identifier, identifier_type: InChIIdentifier):
@@ -153,7 +153,7 @@ def _connectivity_from_identifier(identifier, identifier_type: InChIIdentifier):
 def _assign_output_compound_identifiers(
     df: pd.DataFrame,
     compound_equality: CompoundEqualityMethod,
-    identifier_by_smiles: Optional[dict] = None,
+    identifier_by_smiles: dict | None = None,
 ) -> pd.DataFrame:
     """Add inspectable compound identifiers without recalculating cached values."""
     result = df.copy()
@@ -179,7 +179,7 @@ def _finalize_aggregated_output(
     df: pd.DataFrame,
     compound_equality: CompoundEqualityMethod,
     extra_id_cols: list[str],
-    identifier_by_smiles: Optional[dict] = None,
+    identifier_by_smiles: dict | None = None,
 ) -> pd.DataFrame:
     """Add identifiers, order output columns, and assign shared-identifier groups."""
     comment_columns = [DATA_PROCESSING_COMMENT, DATA_DROPPING_COMMENT]
@@ -461,27 +461,27 @@ def _warn_info_post_aggregation_repeats(
 
 
 def get_standardize_and_clean_workflow(
-    molecule_ids: Optional[list[str]] = None,
-    target_ids: Optional[list[str]] = None,
-    assay_ids: Optional[list[str]] = None,
-    document_ids: Optional[list[str]] = None,
+    molecule_ids: list[str] | None = None,
+    target_ids: list[str] | None = None,
+    assay_ids: list[str] | None = None,
+    document_ids: list[str] | None = None,
     chirality: bool = True,
     calculate_pchembl: bool = False,
-    output_path: Optional[Union[str, Path]] = None,
-    confidence_scores: list[str] = [7, 8, 9],
-    bioactivity_type: Optional[list[str]] = None,
-    standard_relation: list[str] = ["="],
-    standard_units: Optional[list[str]] = None,
-    assay_types: list[str] = ["B", "F"],
-    chembl_release: Optional[int] = None,
+    output_path: str | Path | None = None,
+    confidence_scores: list[int] | tuple[int, ...] | None = (7, 8, 9),
+    bioactivity_type: list[str] | None = None,
+    standard_relation: list[str] | tuple[str, ...] | None = ("=",),
+    standard_units: list[str] | None = None,
+    assay_types: list[str] | tuple[str, ...] | None = ("B", "F"),
+    chembl_release: int | None = None,
     save_not_aggregated: bool = True,
     drop_unassigned_chiral: bool = False,
-    version: Optional[Union[int, str]] = None,
+    version: int | str | None = None,
     backend: Literal["downloader", "webresource"] = "downloader",
     curate_annotation_errors: bool = True,
     require_doc_date: bool = False,
-    min_assay_size: Optional[int] = None,
-    max_assay_size: Optional[int] = None,
+    min_assay_size: int | None = None,
+    max_assay_size: int | None = None,
     min_assay_overlap: int = 0,
     strict_mutant_removal: bool = False,
     value_col: str = "pchembl_value",
@@ -528,6 +528,13 @@ def get_standardize_and_clean_workflow(
     Returns:
         pd.DataFrame: the filtered, standardized, and cleaned data
     """
+    # Immutable defaults keep explicit None meaning "no filter".
+    if assay_types is not None:
+        assay_types = list(assay_types)
+    if standard_relation is not None:
+        standard_relation = list(standard_relation)
+    if confidence_scores is not None:
+        confidence_scores = list(confidence_scores)
     if output_path is not None:
         if isinstance(output_path, str):
             output_path = Path(output_path)
@@ -692,7 +699,7 @@ def get_standardize_and_clean_workflow(
     # A compound can have many activity rows. Standardization is deterministic, so run
     # the expensive ChEMBL pipeline once per distinct source structure and map it back.
     unique_canonical_smiles = df["canonical_smiles"].drop_duplicates().tolist()
-    standardized_by_smiles = dict(zip(unique_canonical_smiles, stdzer(unique_canonical_smiles)))
+    standardized_by_smiles = dict(zip(unique_canonical_smiles, stdzer(unique_canonical_smiles), strict=True))
 
     df = (
         df
@@ -751,7 +758,7 @@ def get_standardize_and_clean_workflow(
             chunk_size=200,
         )
         undefined_stereo_counts = [len(value) for value in applier()]
-        undefined_stereo_by_smiles = dict(zip(unique_smiles, undefined_stereo_counts))
+        undefined_stereo_by_smiles = dict(zip(unique_smiles, undefined_stereo_counts, strict=True))
 
         df = df.assign(
             undefined_stereocenters=lambda x: x["standard_smiles"].map(undefined_stereo_by_smiles)
@@ -813,11 +820,11 @@ def get_standardize_and_clean_workflow(
 def aggregate_data(
     df,
     chirality: bool,
-    metadata_cols: list[str] = [],
-    extra_id_cols: list[str] = [],
-    extra_multival_cols: list[str] = [],
+    metadata_cols: list[str] | None = None,
+    extra_id_cols: list[str] | None = None,
+    extra_multival_cols: list[str] | None = None,
     aggregate_mutants: bool = False,
-    output_path: Optional[Union[str, Path]] = None,
+    output_path: str | Path | None = None,
     compound_equality: CompoundEqualityMethod = "inchikey",
     value_col: str = "pchembl_value",
 ):
@@ -854,6 +861,12 @@ def aggregate_data(
     Returns:
         pd.DataFrame: the aggregated data
     """
+    if extra_multival_cols is None:
+        extra_multival_cols = []
+    if extra_id_cols is None:
+        extra_id_cols = []
+    if metadata_cols is None:
+        metadata_cols = []
     df = _apply_stereochemistry_policy(df, chirality, compound_equality)
     current_extra_id_cols = list(extra_id_cols)  # mutable copy
 
@@ -865,7 +878,7 @@ def aggregate_data(
         unique_fps = calculate_mixed_FPs(
             unique_smiles, n_jobs=8, morgan_kwargs={"useChirality": chirality}, chunk_size=50
         )
-        fp_by_smiles = dict(zip(unique_smiles, unique_fps))
+        fp_by_smiles = dict(zip(unique_smiles, unique_fps, strict=True))
         df = df.assign(id_array=[fp_by_smiles[value] for value in df["standard_smiles"]])
     elif compound_equality in INCHI_IDENTIFIERS:
         identifier_by_smiles = _identifier_map(df["standard_smiles"], compound_equality)
@@ -960,10 +973,10 @@ def aggregate_data(
 def re_aggregate_data(
     df: pd.DataFrame,
     chirality: bool,
-    extra_id_cols: list[str] = [],
-    extra_multival_cols: list[str] = [],
+    extra_id_cols: list[str] | None = None,
+    extra_multival_cols: list[str] | None = None,
     aggregate_mutants: bool = False,
-    output_path: Optional[Union[str, Path]] = None,
+    output_path: str | Path | None = None,
     compound_equality: CompoundEqualityMethod = "inchikey",
 ) -> pd.DataFrame:
     """Re-aggregate the data obtained from the `aggregate_data` method after dataset
@@ -992,6 +1005,10 @@ def re_aggregate_data(
     Returns:
         pd.DataFrame: the re-aggregated data
     """
+    if extra_multival_cols is None:
+        extra_multival_cols = []
+    if extra_id_cols is None:
+        extra_id_cols = []
     if "processed_smiles" in df.columns:
         df = df.rename(columns={"processed_smiles": "standard_smiles"})
     if "standard_smiles" not in df.columns:
@@ -1006,7 +1023,7 @@ def re_aggregate_data(
     if compound_equality == "mixed_fp":
         unique_smiles = df["standard_smiles"].drop_duplicates().tolist()
         unique_fps = calculate_mixed_FPs(unique_smiles, n_jobs=8, morgan_kwargs={"useChirality": chirality})
-        fp_by_smiles = dict(zip(unique_smiles, unique_fps))
+        fp_by_smiles = dict(zip(unique_smiles, unique_fps, strict=True))
         id_array = pd.Series([fp_by_smiles[value] for value in df["standard_smiles"]], index=df.index)
     elif compound_equality in INCHI_IDENTIFIERS:
         if (
@@ -1015,7 +1032,7 @@ def re_aggregate_data(
             and compound_equality in df.columns
             and df[compound_equality].notna().all()
         ):
-            identifier_by_smiles = dict(zip(df["standard_smiles"], df[compound_equality]))
+            identifier_by_smiles = dict(zip(df["standard_smiles"], df[compound_equality], strict=True))
         else:
             identifier_by_smiles = _identifier_map(df["standard_smiles"], compound_equality)
         id_array = df["standard_smiles"].map(identifier_by_smiles)

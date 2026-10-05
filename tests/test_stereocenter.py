@@ -1,14 +1,13 @@
 """Test function to check for undefined stereocenters in a molecule."""
 
 import unittest
-from typing import Union
 
 from rdkit import Chem
 
 from Capricho.core.stereo import find_undefined_stereocenters
 
 
-def has_undefined_stereocenter(input: Union[Chem.Mol, str]) -> bool:
+def has_undefined_stereocenter(input: Chem.Mol | str) -> bool:
     """
     Check if molecule has any stereocenters with undefined chirality.
 

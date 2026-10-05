@@ -3,10 +3,9 @@
 import json
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Annotated
 
 import typer
-from typing_extensions import Annotated
 
 from .. import __version__
 from ..logger import logger, setup_logger
@@ -82,7 +81,7 @@ app = typer.Typer(
 )
 
 
-def csv_string(value: Optional[str]) -> List[str]:
+def csv_string(value: str | None) -> list[str]:
     """Parses a comma-separated string into a list of strings."""
     logger.debug(f"Parsing CSV string type= {type(value)}, value= {value}")
     if isinstance(value, list):
@@ -92,7 +91,7 @@ def csv_string(value: Optional[str]) -> List[str]:
     return [item.strip() for item in value.split(",")]
 
 
-def csv_intergers(value: Optional[str]) -> List[int]:
+def csv_intergers(value: str | None) -> list[int]:
     """Parses a comma-separated string into a list of integers."""
     logger.debug(f"Parsing CSV int type={type(value)}, value={value}")
     if isinstance(value, list):
@@ -152,7 +151,7 @@ class ExploreFormat(str, Enum):
 
 @app.callback()
 def main(
-    ctx: typer.Context,  # noqa: F821
+    ctx: typer.Context,
     log_level: Annotated[
         LogLevel,
         typer.Option(
@@ -173,13 +172,13 @@ def main(
 
 @app.command()
 def download(
-    ctx: typer.Context,  # noqa: F821
+    ctx: typer.Context,
     version: Annotated[
-        Optional[int],
+        int | None,
         typer.Option("--version", "-v", help="ChEMBL version to download. Defaults to the latest."),
     ] = None,
     prefix: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--prefix",
             "-p",
@@ -187,7 +186,7 @@ def download(
         ),
     ] = None,
     set_from_path: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option(
             "--set-from-path",
             help=(
@@ -240,27 +239,27 @@ def download(
 
 @app.command()
 def explore(
-    ctx: typer.Context,  # noqa: F821
+    ctx: typer.Context,
     version: Annotated[
-        Optional[int], typer.Option("--version", "-v", help="ChEMBL version to use. Defaults to the latest.")
+        int | None, typer.Option("--version", "-v", help="ChEMBL version to use. Defaults to the latest.")
     ] = None,
     list_tables: Annotated[
         bool, typer.Option("--list-tables", "-list", help="List all tables within the SQL database and exit.")
     ] = False,
-    table: Annotated[Optional[str], typer.Option("--table", "-t", help="Explore a specific table.")] = None,
+    table: Annotated[str | None, typer.Option("--table", "-t", help="Explore a specific table.")] = None,
     search_column: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--search-column", "-search", help="Search for tables containing a column name pattern."
         ),
     ] = None,
-    query: Annotated[Optional[str], typer.Option("--query", "-q", help="Run a custom SQL query.")] = None,
+    query: Annotated[str | None, typer.Option("--query", "-q", help="Run a custom SQL query.")] = None,
     fmt: Annotated[
         ExploreFormat,
         typer.Option("--format", "-f", help="Console output format for tables."),
     ] = ExploreFormat.markdown,
     output_path: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output", "-o", help="Save primary result DataFrame to file (format from extension)."),
     ] = None,
     colorize: Annotated[
@@ -294,7 +293,7 @@ def get_data(
     ctx: typer.Context,
     # --- Input ID Arguments ---
     molecule_ids: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "-mids",
             "--molecule-ids",
@@ -305,7 +304,7 @@ def get_data(
         ),
     ] = DEFAULTS["molecule_ids"],
     target_ids: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "-tids",
             "--target-ids",
@@ -316,7 +315,7 @@ def get_data(
         ),
     ] = DEFAULTS["target_ids"],
     assay_ids: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "-asids",
             "--assay-ids",
@@ -327,7 +326,7 @@ def get_data(
         ),
     ] = DEFAULTS["assay_ids"],
     document_ids: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "-dids",
             "--document-ids",
@@ -358,7 +357,7 @@ def get_data(
         ),
     ] = DEFAULTS["confidence_scores"],
     bioactivity_type: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "-biotype",
             "--bioactivity-type",
@@ -378,7 +377,7 @@ def get_data(
         ),
     ] = DEFAULTS["standard_relation"],
     standard_units: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "-units",
             "--standard-units",
@@ -398,7 +397,7 @@ def get_data(
         ),
     ] = DEFAULTS["assay_types"],
     chembl_release: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "-cr",
             "--chembl-release",
@@ -407,7 +406,7 @@ def get_data(
         ),
     ] = DEFAULTS["chembl_release"],
     chembl_version: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "-v",
             "--chembl-version",
@@ -467,7 +466,7 @@ def get_data(
     ] = DEFAULTS["id_columns"],
     # --- Numeric Filter Arguments ---
     max_assay_size: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "-maxas",
             "--max-assay-size",
@@ -476,7 +475,7 @@ def get_data(
         ),
     ] = DEFAULTS["max_assay_size"],
     min_assay_size: Annotated[
-        Optional[int],
+        int | None,
         typer.Option(
             "-minas",
             "--min-assay-size",
@@ -500,7 +499,6 @@ def get_data(
             "-calc/-no-calc",
             "--calculate-pchembl/--no-calculate-pchembl",
             help="Calculate pChEMBL values if not reported.",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS["calculate_pchembl"],
@@ -513,7 +511,6 @@ def get_data(
             "for mixed_fp (enabled by default). --no-chirality removes stereo before matching "
             "with any equality method; "
             "connectivity always merges stereoisomers.",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS["chirality"],
@@ -523,7 +520,6 @@ def get_data(
             "-duchi/-dont-duchi",
             "--drop-unassigned-chiral/--dont-drop-unassigned-chiral",
             help="Drop entries with unassigned chiral centers.",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS["drop_unassigned_chiral"],
@@ -533,7 +529,6 @@ def get_data(
             "-cure/-dont-cure",
             "--curate-annotation-errors/--dont-curate-annotation-errors",
             help="Apply curation for pChEMBL annotation errors.",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS["curate_annotation_errors"],
@@ -543,7 +538,6 @@ def get_data(
             "-skip-agg/-dont-skip-agg",
             "--skip-not-aggregated/--dont-skip-not-aggregated",
             help="Skip saving pre-aggregation data.",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS["skip_not_aggregated"],
@@ -553,7 +547,6 @@ def get_data(
             "-mutagg/-dont-mutagg",
             "--aggregate-mutants/--dont-aggregate-mutants",
             help="Aggregate data on targets regardless of mutation.",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS["aggregate_mutants"],
@@ -563,7 +556,6 @@ def get_data(
             "-rec/-dont-rec",
             "--skip-recipe/--dont-skip-recipe",
             help="Skip saving the JSON recipe file.",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS["skip_recipe"],
@@ -573,7 +565,6 @@ def get_data(
             "-reqdoc/-dont-reqdoc",
             "--require-doc-date/--dont-require-doc-date",
             help="Filter out bioactivities without a document date.",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS["require_doc_date"],
@@ -583,7 +574,6 @@ def get_data(
             "-smr/-no-smr",
             "--strict-mutant-removal/--no-strict-mutant-removal",
             help="Flag assays with mutant-related keywords in assay_description for removal.",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS["strict_mutant_removal"],
@@ -594,7 +584,6 @@ def get_data(
             "--convert-units/--no-convert-units",
             help="Convert units to standard formats: permeability (10^-6 cm/s), "
             "molar concentration (nM), mass concentration (ug/mL), dose (mg/kg), time (hr).",
-            is_flag=True,
             metavar="bool",
         ),
     ] = DEFAULTS.get("convert_units", False),
@@ -687,7 +676,7 @@ def get_data(
             save_k = k.replace("_", "-")  # same format as the command line
             if k in ["chembl_release", "chembl_version"]:
                 if v is not None:
-                    command_vals.append((f"--{save_k} {v}"))
+                    command_vals.append(f"--{save_k} {v}")
                 else:  # safe to assume latest version; if None, chembl_downloader gets latest
                     command_vals.append(f"--{save_k} {latest()}")
             elif isinstance(v, Path) or isinstance(v, Enum):
@@ -700,7 +689,7 @@ def get_data(
                     # Make the stereo policy explicit even when it matches the default.
                     command_vals.append("--chirality" if v else "--no-chirality")
                 elif k in DEFAULT_FALSE_ARGS and v is not False:
-                    command_vals.append((f"--{save_k}"))
+                    command_vals.append(f"--{save_k}")
                 elif k in DEFAULT_TRUE_ARGS and v is not True:
                     command_vals.append(f"--dont-{save_k}")
             elif isinstance(v, list):
@@ -808,7 +797,6 @@ def binarize_data(
             "-cmp-mut/-dont-cmp-mut",
             "--compare-across-mutants/--dont-compare-across-mutants",
             help="If True, measurements on different mutants are compared for conflicts. Default: False (different mutants are separate compound-target pairs).",
-            is_flag=True,
             metavar="bool",
         ),
     ] = False,
@@ -960,7 +948,7 @@ def prepare_data(
         ),
     ] = "smiles",
     remove_flags: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--remove-flags",
             parser=csv_string,
@@ -969,7 +957,7 @@ def prepare_data(
         ),
     ] = None,
     id_columns: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--id-columns",
             parser=csv_string,
@@ -984,7 +972,6 @@ def prepare_data(
         typer.Option(
             "--drop-undefined-stereo/--keep-undefined-stereo",
             help="Drop entries with undefined stereochemistry.",
-            is_flag=True,
         ),
     ] = False,
     drop_potential_duplicate: Annotated[
@@ -992,7 +979,6 @@ def prepare_data(
         typer.Option(
             "--drop-potential-duplicate/--keep-potential-duplicate",
             help="Drop entries flagged as potential duplicates.",
-            is_flag=True,
         ),
     ] = False,
     drop_data_validity: Annotated[
@@ -1000,7 +986,6 @@ def prepare_data(
         typer.Option(
             "--drop-data-validity/--keep-data-validity",
             help="Drop entries with data validity comments.",
-            is_flag=True,
         ),
     ] = False,
     drop_unit_error: Annotated[
@@ -1008,7 +993,6 @@ def prepare_data(
         typer.Option(
             "--drop-unit-error/--keep-unit-error",
             help="Drop entries with unit annotation errors.",
-            is_flag=True,
         ),
     ] = False,
     drop_mixture: Annotated[
@@ -1016,7 +1000,6 @@ def prepare_data(
         typer.Option(
             "--drop-mixture/--keep-mixture",
             help="Drop entries containing mixtures in SMILES.",
-            is_flag=True,
         ),
     ] = False,
     drop_activity_comment: Annotated[
@@ -1025,7 +1008,6 @@ def prepare_data(
             "--drop-activity-comment/--keep-activity-comment",
             help="Drop entries whose activity_comment reports inactivity while the source "
             "standard_relation is '='.",
-            is_flag=True,
         ),
     ] = False,
     drop_assay_size: Annotated[
@@ -1033,7 +1015,6 @@ def prepare_data(
         typer.Option(
             "--drop-assay-size/--keep-assay-size",
             help="Drop entries outside assay size bounds (both too small and too large).",
-            is_flag=True,
         ),
     ] = False,
     drop_insufficient_overlap: Annotated[
@@ -1041,7 +1022,6 @@ def prepare_data(
         typer.Option(
             "--drop-insufficient-overlap/--keep-insufficient-overlap",
             help="Drop entries from assays with insufficient overlap.",
-            is_flag=True,
         ),
     ] = False,
     # Deduplication and recalculation
@@ -1050,12 +1030,11 @@ def prepare_data(
         typer.Option(
             "--deduplicate/--no-deduplicate",
             help="Remove duplicate pChEMBL values within aggregated rows and recalculate statistics.",
-            is_flag=True,
         ),
     ] = False,
     # Annotation error resolution
     resolve_annotation_error: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--resolve-annotation-error",
             help="Resolve unit annotation errors (3.0 or 6.0 log unit differences) by keeping "
@@ -1065,7 +1044,7 @@ def prepare_data(
     ] = None,
     # Plot output
     plot_path: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option(
             "--plot",
             help="Path to save comparability plot (e.g., comparability.png). If not provided, no plot is generated.",
@@ -1204,7 +1183,7 @@ def prepare_data(
 
                 # Plot 1: Cleaned data comparability (single panel)
                 if len(cleaned_subset) > 0:
-                    fig_clean, ax_clean = plot_subset(
+                    fig_clean, _ax_clean = plot_subset(
                         cleaned_subset,
                         title="Cleaned Data Comparability",
                         value_column=value_col,
@@ -1217,7 +1196,7 @@ def prepare_data(
                     logger.warning("No data remaining after filtering for cleaned plot.")
 
                 # Plot 2: Multi-panel showing remaining flags
-                fig_multi, axs = plot_multi_panel_comparability(
+                fig_multi, _axs = plot_multi_panel_comparability(
                     exploded_subset,
                     all_comments,
                     title="Remaining Flags in Prepared Data",

@@ -1,8 +1,9 @@
 """Module containing helper functions for manipulating pandas DataFrames"""
 
 import functools
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -97,8 +98,8 @@ def filter_dropping_flags(
 
 def save_dataframe(
     df: pd.DataFrame,
-    path: Union[Path, str],
-    compression: Optional[str] = "infer",
+    path: Path | str,
+    compression: str | None = "infer",
 ) -> None:
     """Saves a DataFrame to a file with optional compression.
 
@@ -141,7 +142,7 @@ def save_dataframe(
         )
 
 
-def conflicting_duplicates(df, key_subset, diff_subset: Optional[list[str]] = None) -> pd.Series:
+def conflicting_duplicates(df, key_subset, diff_subset: list[str] | None = None) -> pd.Series:
     """Return a boolean Series like `df.duplicated(...)`, where True marks rows
     that have the same values in `key_subset` but different values in `diff_subset`.
     If diff_subset is None, it behaves like `df.duplicated(subset=key_subset, keep=False)`.
@@ -209,7 +210,7 @@ def aggr_val_series(series: pd.Series, sep: str = "|") -> str:
     return sep.join([format_value(x) for x in series])
 
 
-def get_mad(values) -> Union[float, np.float64]:
+def get_mad(values) -> float | np.float64:
     """Calculate the MAD for a list of numerical values. If only one value, return NaN."""
     if len(values) > 1:
         return median_abs_deviation(values)
@@ -217,7 +218,7 @@ def get_mad(values) -> Union[float, np.float64]:
         return np.nan
 
 
-def gmedian(values) -> Union[float, np.float64]:
+def gmedian(values) -> float | np.float64:
     """Calculate the median of a list of -log transformed numerical values. If even number
     of values, return the geometric mean of the two middle values.
 
@@ -344,8 +345,8 @@ def find_dict_in_dataframe(df):
 def add_comment(
     df: pd.DataFrame,
     comment: str,
-    criteria_func: Optional[callable] = None,
-    target_column: Optional[str] = None,
+    criteria_func: Callable[[pd.Series], pd.Series] | None = None,
+    target_column: str | None = None,
     comment_type: Literal["p", "d"] = "d",
 ) -> pd.DataFrame:
     """Marks rows in a DataFrame based on a given criteria or the entire DataFrame, adding a comment to:

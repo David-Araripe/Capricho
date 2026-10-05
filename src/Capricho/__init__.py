@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 from ._version_helper import get_version
 

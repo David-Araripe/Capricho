@@ -2,8 +2,6 @@
 and pivot into activity matrices for multitask modeling.
 """
 
-from typing import List, Optional
-
 import pandas as pd
 
 from ..core.pandas_helper import assign_shared_identifier_groups, assign_stats
@@ -12,10 +10,10 @@ from ..logger import logger
 
 def clean_data(
     df: pd.DataFrame,
-    drop_flags: Optional[List[str]] = None,
+    drop_flags: list[str] | None = None,
     deduplicate: bool = False,
     value_col: str = "pchembl_value",
-    resolve_annotation_error: Optional[str] = None,
+    resolve_annotation_error: str | None = None,
     compound_col: str = "inchikey",
 ) -> pd.DataFrame:
     """Clean aggregated bioactivity data by deduplicating, resolving errors, and filtering flags.
@@ -219,7 +217,7 @@ def prepare_multitask_data(
     value_col: str,
     compound_col: str,
     smiles_col: str,
-    id_columns: Optional[List[str]] = None,
+    id_columns: list[str] | None = None,
 ) -> pd.DataFrame:
     """Transform aggregated data to multitask format (activity matrix).
 

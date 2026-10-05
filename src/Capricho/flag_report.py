@@ -18,8 +18,6 @@ comparisons. Coverage summaries additionally report unique assay identifiers rep
 aggregated DataFrame as their own explicitly labelled denominator.
 """
 
-from typing import Optional, Union
-
 import pandas as pd
 
 from .core.default_fields import ASSAY_ID, DATA_DROPPING_COMMENT
@@ -106,7 +104,7 @@ def _entry_flags(
 
 def summarize_flags(
     data: pd.DataFrame,
-    flags: Optional[list[str]] = None,
+    flags: list[str] | None = None,
     comment_column: str = DATA_DROPPING_COMMENT,
     sep_str: str = "|",
     per_measurement: bool = False,
@@ -227,8 +225,8 @@ def summarize_cross_assay_coverage(
     data: pd.DataFrame,
     assay_column: str = "assay_chembl_id",
     sep_str: str = "|",
-    n_retrieved: Optional[int] = None,
-) -> dict[str, Union[int, float]]:
+    n_retrieved: int | None = None,
+) -> dict[str, int | float]:
     """Measure how much of an aggregated dataset cross-assay comparability can reach.
 
     Only compounds measured in more than one assay contribute a comparison, so this is
@@ -283,7 +281,7 @@ def summarize_cross_assay_coverage(
 
 
 def format_cross_assay_coverage(
-    coverage: dict[str, Union[int, float]],
+    coverage: dict[str, int | float],
     title: str = "CROSS-ASSAY COVERAGE",
     indent: str = "  ",
 ) -> str:
@@ -323,10 +321,10 @@ def format_cross_assay_coverage(
 
 def summarize_curation(
     name: str,
-    retrieved: Optional[pd.DataFrame] = None,
-    aggregated: Optional[pd.DataFrame] = None,
-    comparisons: Optional[pd.DataFrame] = None,
-    drop_flags: Optional[list[str]] = None,
+    retrieved: pd.DataFrame | None = None,
+    aggregated: pd.DataFrame | None = None,
+    comparisons: pd.DataFrame | None = None,
+    drop_flags: list[str] | None = None,
     comment_column: str = DATA_DROPPING_COMMENT,
     comparison_comment_column: str = "dropping_comment",
     assay_column: str = ASSAY_ID,
@@ -414,11 +412,11 @@ def summarize_curation(
 
 def summarize_curation_by_group(
     group_column: str,
-    retrieved: Optional[pd.DataFrame] = None,
-    aggregated: Optional[pd.DataFrame] = None,
-    comparisons: Optional[pd.DataFrame] = None,
-    drop_flags: Optional[list[str]] = None,
-    labels: Optional[dict] = None,
+    retrieved: pd.DataFrame | None = None,
+    aggregated: pd.DataFrame | None = None,
+    comparisons: pd.DataFrame | None = None,
+    drop_flags: list[str] | None = None,
+    labels: dict | None = None,
     comment_column: str = DATA_DROPPING_COMMENT,
     comparison_comment_column: str = "dropping_comment",
     assay_column: str = ASSAY_ID,

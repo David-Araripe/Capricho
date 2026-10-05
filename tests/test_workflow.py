@@ -1068,7 +1068,6 @@ class TestFetchFromChEMBL(unittest.TestCase):
 
     def test_measurement_level_flag_filtering_selective(self):
         """Filter only 'Flag A' when 'Flag B' also present at different positions."""
-        from scipy.stats import gmean
 
         test_data = pd.DataFrame(
             {
