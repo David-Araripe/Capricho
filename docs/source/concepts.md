@@ -8,14 +8,17 @@ One of the most important decisions in bioactivity data analysis is determining 
 
 In `capricho get`, `--chirality` is enabled by default, preserving specified stereochemistry during standardization and enabling chiral Morgan fingerprints for `mixed_fp`. With this setting, `inchi`, `inchikey`, and `smiles` distinguish specified stereoisomers.
 
-Explicit `--no-chirality` removes stereochemistry _before_ computing compound identity with any equality method, allowing deliberate stereo-collapsed sensitivity analyses. `connectivity` remains the default equality method and always merges stereoisomers, regardless of the chirality flag; chirality enabled does not make connectivity stereo-aware.
+Explicit `--no-chirality` removes stereochemistry _before_ computing compound identity with any equality method, allowing deliberate stereo-collapsed sensitivity analyses. The default equality method is `inchikey`, which distinguishes specified stereoisomers when chirality is enabled. Explicit `--compound-equality connectivity` always merges stereoisomers, regardless of the chirality flag.
 
 Original ChEMBL `canonical_smiles` values remain available. The processing
 flag `Stereochemistry removed` marks measurements whose specified stereo was intentionally removed during standardization or aggregation. For paired sensitivity analyses, retain a stereo-preserving unaggregated table and aggregate separate copies with `chirality=True` and `chirality=False`, using the same equality method and grouping fields. The Python aggregation functions do not overwrite the input table's structures.
 
-**Compatibility:** the CLI (as published) previously defaulted to `--no-chirality`. Use that option explicitly to reproduce stereo-collapsed runs.
+**Compatibility:** the CLI previously defaulted to connectivity equality and `--no-chirality`.
+To reproduce that policy, pass `--compound-equality connectivity --no-chirality` explicitly.
+For historical connectivity-based runs that enabled chirality, keep `--chirality` and add
+`--compound-equality connectivity`. Existing case-study commands pin both settings.
 
-### Connectivity-Based (Default)
+### Connectivity-Based
 
 The `connectivity` method identifies compounds by their molecular graph. It's based on the first 14 characters of the InChIKey, which encode atom connectivity but ignore stereochemistry and tautomerism:
 
@@ -54,7 +57,7 @@ commands such as `capricho prepare --compound-col inchi`.
 - Specified stereochemistry must remain part of compound identity
 - You want a transparent, non-hashed standard identifier
 
-### InChIKey-Based
+### InChIKey-Based (Default)
 
 The `inchikey` method uses the complete 27-character hash of the standard InChI:
 
@@ -232,7 +235,7 @@ This is useful when you want to study the target in general rather than specific
 Rows kept separate by mutation or `--id-columns` can still share the selected compound
 identifier and `target_chembl_id`. CAPRICHO labels every member of such a group in the
 `shared_identifier_group` output column. With the default method, the compound identifier is
-`connectivity`; `inchi`, `inchikey`, and `smiles` are used when those equality methods are
+`inchikey`; `connectivity`, `inchi`, and `smiles` are used when those equality methods are
 selected. The label is a group identifier, not a quality
 flag: the rows may represent valid, scientifically distinct readouts. Singleton rows contain
 a missing value.
@@ -546,7 +549,7 @@ Every run generates a JSON recipe file containing the full command and all param
 
 ```json
 {
-  "command": "capricho get --target-ids CHEMBL203 --output-path egfr_data.csv",
+  "command": "capricho get --target-ids CHEMBL203 --compound-equality inchikey --chirality --output-path egfr_data.csv",
   "capricho version": "0.1.0",
   "molecule_ids": [],
   "target_ids": ["CHEMBL203"],
@@ -559,7 +562,8 @@ Every run generates a JSON recipe file containing the full command and all param
   "standard_relation": ["="],
   "assay_types": ["B", "F"],
   "chembl_version": "36",
-  "compound_equality": "connectivity",
+  "compound_equality": "inchikey",
+  "chirality": true,
   "value_column": "pchembl_value"
 }
 ```

@@ -269,6 +269,7 @@ def test_cli_stereo_policy_before_aggregation(fetched_stereoisomers, tmp_path, i
     recipe = json.loads((tmp_path / "stereoisomers_recipe.json").read_text())
     assert recipe["chirality"] == preserves_stereo
     assert recipe["compound_equality"] == identifier
+    assert f"--compound-equality {identifier}" in recipe["command"]
     assert "CompoundEquality." not in recipe["command"]
     assert ("--chirality" if preserves_stereo else "--no-chirality") in recipe["command"]
     assert "--dont-chirality" not in recipe["command"]
@@ -339,3 +340,110 @@ def test_prepare_annotation_resolution_preserves_input_identity_policy(identifie
     assert len(cleaned) == (2 if separates_stereo else 1)
     assert cleaned["smiles"].str.contains("@").eq(separates_stereo).all()
     assert cleaned["pchembl_value_counts"].sum() == 2
+
+
+@pytest.mark.parametrize("flags", [[], ["--no-chirality"]])
+def test_cli_default_identity_is_inchikey_through_prepare_and_binarize(
+    fetched_stereoisomers, tmp_path, flags
+):
+    from typer.testing import CliRunner
+
+    from Capricho.cli.main import app
+
+    runner = CliRunner()
+    output = tmp_path / "default.csv"
+    result = runner.invoke(
+        app,
+        ["get", "--molecule-ids", "MOL1,MOL2", "--chembl-version", "37", "-o", str(output), *flags],
+    )
+    assert result.exit_code == 0, (result.output, result.exception)
+    data = pd.read_csv(output)
+    preserves_stereo = "--no-chirality" not in flags
+    expected_rows = 2 if preserves_stereo else 1
+    assert len(data) == expected_rows
+    assert data["inchikey"].nunique() == expected_rows
+    assert data["connectivity"].nunique() == 1
+    assert data["shared_identifier_group"].isna().all()
+    assert data["smiles"].str.contains("@").eq(preserves_stereo).all()
+    recipe = json.loads((tmp_path / "default_recipe.json").read_text())
+    assert recipe["compound_equality"] == "inchikey"
+    assert "--compound-equality inchikey" in recipe["command"]
+
+    matrix_path = tmp_path / "matrix.csv"
+    prepared = runner.invoke(app, ["prepare", "-i", str(output), "-o", str(matrix_path)])
+    assert prepared.exit_code == 0, (prepared.output, prepared.exception)
+    matrix = pd.read_csv(matrix_path)
+    assert len(matrix) == expected_rows
+    assert matrix["smiles"].nunique() == expected_rows
+
+    binary_path = tmp_path / "binary.csv"
+    binary = runner.invoke(
+        app,
+        [
+            "binarize",
+            "-i",
+            str(output),
+            "-o",
+            str(binary_path),
+            "--threshold",
+            "6.5",
+            "--conflict-resolution",
+            "drop",
+        ],
+    )
+    assert binary.exit_code == 0, (binary.output, binary.exception)
+    labels = pd.read_csv(binary_path)
+    assert len(labels) == expected_rows
+    if preserves_stereo:
+        assert dict(zip(labels["molecule_chembl_id"], labels["activity_binary"])) == {"MOL1": 0, "MOL2": 1}
+
+
+def test_python_defaults_preserve_stereo_identity_in_all_stages():
+    from Capricho.core.binarization import binarize_aggregated_data
+
+    aggregated = aggregate_data(_stereoisomer_source(), chirality=True)
+    assert len(aggregated) == 2
+    assert aggregated["inchikey"].nunique() == 2
+    cleaned = clean_data(aggregated, resolve_annotation_error="first")
+    assert len(cleaned) == 2
+    assert cleaned["shared_identifier_group"].isna().all()
+    reaggregated = re_aggregate_data(deaggregate_data(aggregated), chirality=True)
+    assert set(reaggregated["inchikey"]) == set(aggregated["inchikey"])
+
+    labels = binarize_aggregated_data(cleaned, threshold=6.5, conflict_resolution="drop")
+    assert len(labels) == 2
+    assert set(labels["activity_binary"]) == {0, 1}
+    # Explicit broader identity still permits connectivity-level conflict inspection.
+    collapsed = binarize_aggregated_data(
+        cleaned, threshold=6.5, compound_id_col="connectivity", conflict_resolution="drop"
+    )
+    assert collapsed.empty
+
+
+def test_legacy_connectivity_tables_require_explicit_downstream_identity(tmp_path):
+    from typer.testing import CliRunner
+
+    from Capricho.cli.main import app
+    from Capricho.core.binarization import binarize_aggregated_data
+
+    legacy = aggregate_data(_stereoisomer_source(), chirality=False, compound_equality="connectivity")
+    assert "inchikey" not in legacy.columns
+    with pytest.raises(ValueError, match="--compound-col connectivity"):
+        clean_data(legacy)
+    with pytest.raises(ValueError, match="--compound-id-col connectivity"):
+        binarize_aggregated_data(legacy)
+    assert len(clean_data(legacy, compound_col="connectivity")) == 1
+    assert len(binarize_aggregated_data(legacy, compound_id_col="connectivity")) == 1
+
+    input_path = tmp_path / "legacy.csv"
+    legacy.to_csv(input_path, index=False)
+    runner = CliRunner()
+    for command, option in [("prepare", "--compound-col"), ("binarize", "--compound-id-col")]:
+        output_path = tmp_path / f"{command}.csv"
+        args = [command, "-i", str(input_path), "-o", str(output_path)]
+        default = runner.invoke(app, args)
+        assert default.exit_code != 0
+        assert f"{option} connectivity" in str(default.exception)
+        explicit = runner.invoke(app, [*args, option, "connectivity"])
+        assert explicit.exit_code == 0, (explicit.output, explicit.exception)
+        assert len(pd.read_csv(output_path)) == 1

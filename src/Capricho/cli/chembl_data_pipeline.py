@@ -290,7 +290,7 @@ def _warn_info_post_aggregation_repeats(
     extra_id_cols: list[str],
     aggregate_mutants: bool = False,
     value_col: str = "pchembl_value",
-    compound_equality: CompoundEqualityMethod = "connectivity",
+    compound_equality: CompoundEqualityMethod = "inchikey",
     _limit: int = 30,
     _sample_rows: int = 5,
 ) -> None:
@@ -818,7 +818,7 @@ def aggregate_data(
     extra_multival_cols: list[str] = [],
     aggregate_mutants: bool = False,
     output_path: Optional[Union[str, Path]] = None,
-    compound_equality: CompoundEqualityMethod = "connectivity",
+    compound_equality: CompoundEqualityMethod = "inchikey",
     value_col: str = "pchembl_value",
 ):
     """Aggregate the data obtained from ChEMBL by:
@@ -844,9 +844,9 @@ def aggregate_data(
         aggregate_mutants: if true, will aggregate data solely based on the target_chembl_id,
             regardless of the mutation flag in ChEMBL. Defaults to False.
         output_path: path to save the aggregated data
-        compound_equality: How to identify compounds in the dataset. ``connectivity`` uses
-            the first InChIKey block; ``inchi`` and ``inchikey`` use the complete standard
-            InChI representation or its hashed key; ``smiles`` uses standardized SMILES;
+        compound_equality: How to identify compounds in the dataset. Defaults to ``inchikey``.
+            ``connectivity`` uses the first InChIKey block; ``inchi`` and ``inchikey`` use
+            the complete standard InChI representation or its hashed key; ``smiles`` uses standardized SMILES;
             and ``mixed_fp`` uses combined ECFP4 and RDKit fingerprints.
         value_col: Column name containing the values to aggregate statistics on.
             Defaults to "pchembl_value". Use "standard_value" for non-pChEMBL data (e.g., % inhibition).
@@ -964,7 +964,7 @@ def re_aggregate_data(
     extra_multival_cols: list[str] = [],
     aggregate_mutants: bool = False,
     output_path: Optional[Union[str, Path]] = None,
-    compound_equality: CompoundEqualityMethod = "connectivity",
+    compound_equality: CompoundEqualityMethod = "inchikey",
 ) -> pd.DataFrame:
     """Re-aggregate the data obtained from the `aggregate_data` method after dataset
     explosion. Useful for exploring the effect of different `extra_id_cols` and other
@@ -984,9 +984,9 @@ def re_aggregate_data(
         aggregate_mutants: if true, will aggregate data solely based on the target_chembl_id,
             regardless of the mutation flag in ChEMBL. Defaults to False.
         output_path: path to save the aggregated data
-        compound_equality: How to identify compounds in the dataset. ``connectivity`` uses
-            the first InChIKey block; ``inchi`` and ``inchikey`` use the complete standard
-            InChI representation or its hashed key; ``smiles`` uses standardized SMILES;
+        compound_equality: How to identify compounds in the dataset. Defaults to ``inchikey``.
+            ``connectivity`` uses the first InChIKey block; ``inchi`` and ``inchikey`` use
+            the complete standard InChI representation or its hashed key; ``smiles`` uses standardized SMILES;
             and ``mixed_fp`` uses combined ECFP4 and RDKit fingerprints.
 
     Returns:

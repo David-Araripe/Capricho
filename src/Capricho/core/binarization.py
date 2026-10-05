@@ -976,7 +976,7 @@ def binarize_aggregated_data(
     df: pd.DataFrame,
     threshold: float = 6.0,
     value_column: str = "pchembl_value_mean",
-    compound_id_col: str = "connectivity",
+    compound_id_col: str = "inchikey",
     target_id_col: str = "target_chembl_id",
     relation_col: str = "standard_relation",
     output_binary_col: str = "activity_binary",
@@ -1001,7 +1001,8 @@ def binarize_aggregated_data(
         df: Aggregated DataFrame from aggregate_data() with pchembl statistics
         threshold: Activity threshold for binarization (default 6.0 = 1 µM)
         value_column: Which aggregated column to use (default: "pchembl_value_mean")
-        compound_id_col: Column identifying compounds (default: "connectivity")
+        compound_id_col: Column identifying compounds (default: "inchikey").
+            Select "connectivity" explicitly for connectivity-only data.
         target_id_col: Column identifying targets (default: "target_chembl_id")
         relation_col: Column with standard_relation values (default: "standard_relation")
         output_binary_col: Name for output binary column (default: "activity_binary")
@@ -1028,7 +1029,13 @@ def binarize_aggregated_data(
     required_cols = [compound_id_col, target_id_col, value_column]
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
-        raise ValueError(f"Missing required columns: {missing_cols}")
+        message = f"Missing required columns: {missing_cols}"
+        if compound_id_col in missing_cols:
+            message += (
+                ". Use compound_id_col='connectivity' (CLI: --compound-id-col connectivity) "
+                "for connectivity-only data, or select the identifier used during aggregation."
+            )
+        raise ValueError(message)
 
     df = df.copy()
 

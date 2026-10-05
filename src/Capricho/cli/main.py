@@ -51,7 +51,7 @@ DEFAULTS = {
     "min_assay_size": None,
     "min_assay_overlap": 0,
     "strict_mutant_removal": False,
-    "compound_equality": "connectivity",
+    "compound_equality": "inchikey",
     "value_column": "pchembl_value",
 }
 
@@ -428,7 +428,8 @@ def get_data(
         typer.Option(
             "-cpd-eq",
             "--compound-equality",
-            help="Method used to identify equivalent compounds during aggregation.",
+            help="Method used to identify equivalent compounds during aggregation. "
+            "Defaults to full InChIKey identity; connectivity deliberately merges stereoisomers.",
         ),
     ] = DEFAULTS["compound_equality"],
     value_column: Annotated[
@@ -692,7 +693,7 @@ def get_data(
             elif isinstance(v, Path) or isinstance(v, Enum):
                 serialized_value = v.value if isinstance(v, Enum) else str(v)
                 configs[k] = serialized_value
-                if DEFAULTS[k] != serialized_value:
+                if k == "compound_equality" or DEFAULTS[k] != serialized_value:
                     command_vals.append(f"--{save_k} {serialized_value}")
             elif isinstance(v, bool):
                 if k == "chirality":
@@ -706,7 +707,7 @@ def get_data(
                 if DEFAULTS[k] != v:
                     command_vals.append(f"--{save_k} {','.join([str(i) for i in v])}")
             elif isinstance(v, str):
-                if DEFAULTS[k] != v:
+                if k == "compound_equality" or DEFAULTS[k] != v:
                     command_vals.append(f"--{save_k} {v}")
             elif isinstance(v, int):
                 if DEFAULTS[k] != v:
@@ -770,9 +771,10 @@ def binarize_data(
         typer.Option(
             "-cid",
             "--compound-id-col",
-            help="Column used as the compound identifier.",
+            help="Column used as the compound identifier (default: inchikey). "
+            "Select connectivity explicitly for connectivity-only data.",
         ),
-    ] = CompoundIdColumn.connectivity,
+    ] = CompoundIdColumn.inchikey,
     target_id_col: Annotated[
         str,
         typer.Option(
@@ -945,9 +947,10 @@ def prepare_data(
         CompoundIdColumn,
         typer.Option(
             "--compound-col",
-            help="Column used as the compound identifier.",
+            help="Column used as the compound identifier (default: inchikey). "
+            "Select connectivity explicitly for connectivity-only data.",
         ),
-    ] = CompoundIdColumn.connectivity,
+    ] = CompoundIdColumn.inchikey,
     smiles_col: Annotated[
         str,
         typer.Option(
