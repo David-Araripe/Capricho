@@ -345,7 +345,9 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        cleaned = clean_data(test_data, drop_flags=["flag_to_remove", "another_flag"])
+        cleaned = clean_data(
+            test_data, drop_flags=["flag_to_remove", "another_flag"], compound_col="connectivity"
+        )
         matrix = prepare_multitask_data(
             df=cleaned,
             task_col="target_chembl_id",
@@ -777,6 +779,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
         result = clean_data(
             test_data,
             drop_flags=["flag_to_remove", "another_flag"],
+            compound_col="connectivity",
         )
 
         # After filtering, only rows without flags should remain
@@ -803,6 +806,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             test_data,
             deduplicate=True,
             value_col="pchembl_value",
+            compound_col="connectivity",
         )
 
         # CONN1 should have had duplicates removed: "8.00|8.00|6.92" -> "8.00|6.92"
@@ -838,6 +842,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
                 test_data,
                 drop_flags=[DroppingComment.UNIT_ANNOTATION_ERROR.value],
                 resolve_annotation_error="first",
+                compound_col="connectivity",
             )
 
     def test_clean_data_composable_with_prepare(self):
@@ -853,7 +858,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
         )
 
         # Step 1: clean
-        cleaned = clean_data(test_data, drop_flags=["flag_to_remove"])
+        cleaned = clean_data(test_data, drop_flags=["flag_to_remove"], compound_col="connectivity")
 
         # Step 2: pivot
         matrix = prepare_multitask_data(
@@ -962,7 +967,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, drop_flags=["Unit Error"])
+        result = clean_data(test_data, drop_flags=["Unit Error"], compound_col="connectivity")
 
         # Row survives (only 1 of 3 measurements flagged)
         self.assertEqual(len(result), 1)
@@ -993,7 +998,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, drop_flags=["Unit Error"])
+        result = clean_data(test_data, drop_flags=["Unit Error"], compound_col="connectivity")
         self.assertEqual(len(result), 0)
 
     def test_measurement_level_flag_filtering_none_flagged(self):
@@ -1015,7 +1020,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, drop_flags=["Unit Error"])
+        result = clean_data(test_data, drop_flags=["Unit Error"], compound_col="connectivity")
         self.assertEqual(len(result), 1)
         self.assertEqual(result.iloc[0]["pchembl_value"], "6.00|6.50|7.00")
         self.assertEqual(result.iloc[0]["pchembl_value_counts"], 3)
@@ -1037,7 +1042,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, drop_flags=["Unit Error"])
+        result = clean_data(test_data, drop_flags=["Unit Error"], compound_col="connectivity")
         self.assertEqual(len(result), 0)
 
     def test_measurement_level_flag_filtering_single_clean(self):
@@ -1057,7 +1062,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, drop_flags=["Unit Error"])
+        result = clean_data(test_data, drop_flags=["Unit Error"], compound_col="connectivity")
         self.assertEqual(len(result), 1)
         self.assertAlmostEqual(result.iloc[0]["pchembl_value_mean"], 6.0)
 
@@ -1082,7 +1087,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, drop_flags=["Flag A"])
+        result = clean_data(test_data, drop_flags=["Flag A"], compound_col="connectivity")
 
         # Only position 0 (Flag A) removed; position 1 (Flag B) and 2 (clean) remain
         self.assertEqual(len(result), 1)
@@ -1110,7 +1115,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, drop_flags=["Flag A"])
+        result = clean_data(test_data, drop_flags=["Flag A"], compound_col="connectivity")
 
         self.assertEqual(len(result), 1)
         # Position 0 removed (contains "Flag A" as substring)
@@ -1136,7 +1141,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, drop_flags=["Unit Error"])
+        result = clean_data(test_data, drop_flags=["Unit Error"], compound_col="connectivity")
 
         # CONN1: 1 of 3 flagged -> 2 remain
         # CONN2: single measurement flagged -> row removed
@@ -1168,7 +1173,9 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, deduplicate=True, drop_flags=["Unit Error"])
+        result = clean_data(
+            test_data, deduplicate=True, drop_flags=["Unit Error"], compound_col="connectivity"
+        )
 
         # After dedup: "6.00|6.00|7.00" -> "6.00|7.00", comments "||Unit Error" -> "|Unit Error"
         # After flag filter: position 1 of "6.00|7.00" has "Unit Error" -> removed -> "6.00"
@@ -1189,7 +1196,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, drop_flags=["Unit Error", "Another Flag"])
+        result = clean_data(test_data, drop_flags=["Unit Error", "Another Flag"], compound_col="connectivity")
 
         # CONN1 and CONN3 removed, CONN2 kept
         self.assertEqual(len(result), 1)
@@ -1216,7 +1223,7 @@ class TestFetchFromChEMBL(unittest.TestCase):
             }
         )
 
-        result = clean_data(test_data, deduplicate=True)
+        result = clean_data(test_data, deduplicate=True, compound_col="connectivity")
 
         # After dedup: "8.00|8.00|6.92" -> "8.00|6.92"
         self.assertEqual(result.iloc[0]["pchembl_value"], "8.00|6.92")

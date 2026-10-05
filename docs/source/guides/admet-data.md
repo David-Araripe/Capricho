@@ -163,11 +163,12 @@ When using `--value-column standard_value`, the output columns include:
 
 Different ADMET conditions can produce separate output rows with the same compound and task
 identifiers. CAPRICHO keeps those rows separate when an ID column differs. With the current
-default identity method, the concrete identifier columns are `connectivity` and
-`target_chembl_id`. If `inchi`, `inchikey`, or `smiles` is selected through
+default identity method, the concrete identifier columns are `inchikey` and
+`target_chembl_id`. If `connectivity`, `inchi`, or `smiles` is selected through
 `--compound-equality`, the diagnostic uses and names that compound identifier instead.
 
-In the MDCK-MDR1 A→B permeability example, a current run reports:
+In the MDCK-MDR1 A→B permeability case study, explicitly pinned to
+`--compound-equality connectivity --no-chirality` to preserve its original policy, a run reports:
 
 ```text
 CAPRICHO found 10 separate activity rows with 5 repeated `connectivity` +

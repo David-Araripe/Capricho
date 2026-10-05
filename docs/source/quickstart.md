@@ -175,8 +175,8 @@ CAPRICHO generates several files:
 
 The main data file contains these important columns:
 
-- Compound identifier: `connectivity` by default, or `inchi`/`inchikey` when selected with
-  `--compound-equality`
+- Compound identifier: full `inchikey` by default; `connectivity` is also retained for
+  reference. Select another identity explicitly with `--compound-equality`.
 - `smiles`: Standardized SMILES representation
 - `target_chembl_id`: ChEMBL ID for the target
 - `pchembl_value_mean`: Mean pChEMBL value (aggregated)

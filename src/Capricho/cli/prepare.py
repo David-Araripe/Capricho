@@ -16,7 +16,7 @@ def clean_data(
     deduplicate: bool = False,
     value_col: str = "pchembl_value",
     resolve_annotation_error: Optional[str] = None,
-    compound_col: str = "connectivity",
+    compound_col: str = "inchikey",
 ) -> pd.DataFrame:
     """Clean aggregated bioactivity data by deduplicating, resolving errors, and filtering flags.
 
@@ -55,7 +55,8 @@ def clean_data(
             Currently only "first" is supported (keep earliest document).
             Cannot be used together with dropping "Unit Annotation Error" flags.
         compound_col: Column defining compound identity for re-aggregation and
-            ``shared_identifier_group``. Defaults to ``connectivity``.
+            ``shared_identifier_group``. Defaults to ``inchikey``; select ``connectivity``
+            explicitly for legacy connectivity-only tables.
 
     Returns:
         Cleaned DataFrame.
@@ -84,6 +85,16 @@ def clean_data(
     if resolve_annotation_error is not None and resolve_annotation_error != "first":
         raise ValueError(
             f"Unknown resolution strategy: {resolve_annotation_error}. Only 'first' is supported."
+        )
+
+    # Quality-only tables need no identity; grouping or re-aggregation does.
+    if compound_col not in df.columns and (
+        "target_chembl_id" in df.columns or resolve_annotation_error is not None
+    ):
+        raise ValueError(
+            f"Missing compound identifier column '{compound_col}'. "
+            "Use compound_col='connectivity' (CLI: --compound-col connectivity) "
+            "for connectivity-only data, or select the identifier used during aggregation."
         )
 
     df = df.copy()
@@ -144,7 +155,8 @@ def clean_data(
 
         df = re_aggregate_data(
             resolved,
-            chirality=False,
+            # Retain the input stereo policy; already stripped structures stay stripped.
+            chirality=True,
             extra_id_cols=detected_id_cols,
             compound_equality=compound_col,
         )

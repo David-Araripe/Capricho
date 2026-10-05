@@ -60,7 +60,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # Check binary labels
         self.assertEqual(result.loc[0, "activity_binary"], 1)  # 7.0 >= 6.0
@@ -78,7 +78,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # '<' means compound is MORE active (lower concentration)
         # If pchembl >= threshold, definitely active
@@ -97,7 +97,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # '>' means compound is LESS active (higher concentration)
         # If pchembl <= threshold, definitely inactive
@@ -116,7 +116,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # Both should be active
         self.assertEqual(result.loc[0, "activity_binary"], 1)
@@ -140,7 +140,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # Should have conflict flag for both rows
         self.assertIn(DATA_DROPPING_COMMENT, result.columns)
@@ -157,7 +157,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # Check that NaN is preserved
         self.assertEqual(result.loc[0, "activity_binary"], 1)
@@ -174,7 +174,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # Should assume '=' for all rows
         self.assertEqual(result.loc[0, "activity_binary"], 1)
@@ -216,7 +216,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=6.5)
+        result = binarize_aggregated_data(df, threshold=6.5, compound_id_col="connectivity")
 
         self.assertEqual(result.loc[0, "activity_binary"], 1)  # 7.0 >= 6.5
         self.assertEqual(result.loc[1, "activity_binary"], 1)  # 6.5 >= 6.5
@@ -234,7 +234,9 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold, value_column="pchembl_value_median")
+        result = binarize_aggregated_data(
+            df, threshold=self.threshold, value_column="pchembl_value_median", compound_id_col="connectivity"
+        )
 
         # Using median values now
         self.assertEqual(result.loc[0, "activity_binary"], 1)  # 6.5 >= 6.0
@@ -251,7 +253,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # Each compound-target pair should be binarized independently
         self.assertEqual(result.loc[0, "activity_binary"], 1)  # CONN1-TARGET1
@@ -270,7 +272,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # < at 5.5: might be inactive (below threshold)
         self.assertEqual(result.loc[0, "activity_binary"], 0)
@@ -290,7 +292,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # ~ at 7.0: lower bound = 6.5 >= 6.0 → active
         self.assertEqual(result.loc[0, "activity_binary"], 1)
@@ -312,7 +314,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # >> means compound is MUCH LESS active (concentration >> reported)
         # Treat like '>': if pchembl <= threshold → inactive
@@ -331,7 +333,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # << means compound is MUCH MORE active (concentration << reported)
         # Treat like '<': if pchembl >= threshold → active
@@ -350,7 +352,7 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold)
+        result = binarize_aggregated_data(df, threshold=self.threshold, compound_id_col="connectivity")
 
         # Both should be active
         self.assertEqual(result.loc[0, "activity_binary"], 1)  # ~ at 6.8: lower bound 6.3
@@ -368,7 +370,9 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold, compare_across_mutants=False)
+        result = binarize_aggregated_data(
+            df, threshold=self.threshold, compare_across_mutants=False, compound_id_col="connectivity"
+        )
 
         # Both should be binarized
         self.assertEqual(result.loc[0, "activity_binary"], 1)  # Active on wild-type
@@ -393,7 +397,9 @@ class TestBinarizeAggregatedData(unittest.TestCase):
             }
         )
 
-        result = binarize_aggregated_data(df, threshold=self.threshold, compare_across_mutants=True)
+        result = binarize_aggregated_data(
+            df, threshold=self.threshold, compare_across_mutants=True, compound_id_col="connectivity"
+        )
 
         # Both should be binarized
         self.assertEqual(result.loc[0, "activity_binary"], 1)  # Active on wild-type
@@ -416,12 +422,16 @@ class TestBinarizeAggregatedData(unittest.TestCase):
         )
 
         # Test with compare_across_mutants=False
-        result_false = binarize_aggregated_data(df, threshold=self.threshold, compare_across_mutants=False)
+        result_false = binarize_aggregated_data(
+            df, threshold=self.threshold, compare_across_mutants=False, compound_id_col="connectivity"
+        )
         self.assertIn(DATA_DROPPING_COMMENT, result_false.columns)
         self.assertTrue(result_false[DATA_DROPPING_COMMENT].str.contains("Non-agreeing", na=False).all())
 
         # Test with compare_across_mutants=True (should have same result)
-        result_true = binarize_aggregated_data(df, threshold=self.threshold, compare_across_mutants=True)
+        result_true = binarize_aggregated_data(
+            df, threshold=self.threshold, compare_across_mutants=True, compound_id_col="connectivity"
+        )
         self.assertIn(DATA_DROPPING_COMMENT, result_true.columns)
         self.assertTrue(result_true[DATA_DROPPING_COMMENT].str.contains("Non-agreeing", na=False).all())
 
@@ -465,20 +475,26 @@ class TestConflictResolution(unittest.TestCase):
     def test_no_resolution_preserves_all_rows(self):
         """Default (no conflict_resolution) keeps all rows, just flags."""
         df = self._make_conflict_df()
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution=None)
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution=None, compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 2)
 
     def test_drop_removes_all_conflicting_rows(self):
         """strategy='drop' removes all rows for conflicting compound-target pairs."""
         df = self._make_conflict_df()
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="drop")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="drop", compound_id_col="connectivity"
+        )
         # Both rows for CONN1-TARGET1 should be dropped
         self.assertEqual(len(result), 0)
 
     def test_relation_keeps_equal_drops_censored(self):
         """strategy='relation' keeps '=' rows and drops censored rows."""
         df = self._make_conflict_df()
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="relation")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="relation", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 1)
         self.assertEqual(result.iloc[0]["standard_relation"], "=")
 
@@ -492,13 +508,17 @@ class TestConflictResolution(unittest.TestCase):
                 "standard_relation": ["<", ">"],
             }
         )
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="relation")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="relation", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 0)
 
     def test_confidence_keeps_highest_score(self):
         """strategy='confidence' keeps row with highest confidence_score."""
         df = self._make_conflict_df()  # scores "9" vs "7"
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="confidence")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="confidence", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 1)
         self.assertEqual(result.iloc[0]["confidence_score"], "9")
 
@@ -513,7 +533,9 @@ class TestConflictResolution(unittest.TestCase):
                 "confidence_score": ["9", "9"],
             }
         )
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="confidence")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="confidence", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 0)
 
     def test_confidence_missing_column_raises_error(self):
@@ -527,7 +549,9 @@ class TestConflictResolution(unittest.TestCase):
             }
         )
         with self.assertRaises(ValueError, msg="confidence_score"):
-            binarize_aggregated_data(df, threshold=6.0, conflict_resolution="confidence")
+            binarize_aggregated_data(
+                df, threshold=6.0, conflict_resolution="confidence", compound_id_col="connectivity"
+            )
 
     def test_majority_keeps_majority_label(self):
         """strategy='majority' keeps rows matching the majority binary label."""
@@ -539,7 +563,9 @@ class TestConflictResolution(unittest.TestCase):
                 "standard_relation": ["=", "=", ">"],
             }
         )
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="majority")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="majority", compound_id_col="connectivity"
+        )
         # 2 active vs 1 inactive → keep active rows
         self.assertEqual(len(result), 2)
         self.assertTrue((result["activity_binary"] == 1).all())
@@ -547,7 +573,9 @@ class TestConflictResolution(unittest.TestCase):
     def test_majority_tie_falls_back_to_drop(self):
         """strategy='majority' drops all on tie (row-based, no counts column)."""
         df = self._make_conflict_df()  # 1 active vs 1 inactive → tie
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="majority")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="majority", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 0)
 
     def test_majority_weights_by_measurement_count(self):
@@ -563,7 +591,9 @@ class TestConflictResolution(unittest.TestCase):
         )
         # Row-based: 1 active vs 1 inactive → tie → drop all
         # Measurement-weighted: 174 active vs 1 inactive → active wins
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="majority")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="majority", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 1)
         self.assertEqual(result.iloc[0]["activity_binary"], 1)
         self.assertEqual(result.iloc[0]["pchembl_value_counts"], 174)
@@ -579,14 +609,18 @@ class TestConflictResolution(unittest.TestCase):
                 "standard_relation": ["=", ">"],
             }
         )
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="majority")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="majority", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 0)
 
     def test_invalid_strategy_raises_error(self):
         """Unknown strategy name raises ValueError."""
         df = self._make_conflict_df()
         with self.assertRaises(ValueError, msg="unknown_strategy"):
-            binarize_aggregated_data(df, threshold=6.0, conflict_resolution="unknown_strategy")
+            binarize_aggregated_data(
+                df, threshold=6.0, conflict_resolution="unknown_strategy", compound_id_col="connectivity"
+            )
 
     def test_non_conflicting_pairs_unaffected(self):
         """Conflict resolution only affects conflicting pairs; others stay intact."""
@@ -599,7 +633,9 @@ class TestConflictResolution(unittest.TestCase):
                 "confidence_score": ["9", "7", "8"],
             }
         )
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="drop")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="drop", compound_id_col="connectivity"
+        )
         # CONN1-TARGET1 is conflicting → dropped; CONN2-TARGET1 is not → kept
         self.assertEqual(len(result), 1)
         self.assertEqual(result.iloc[0]["connectivity"], "CONN2")
@@ -624,7 +660,9 @@ class TestMeasurementLevelMajority(unittest.TestCase):
                 "standard_relation": ["=", "="],
             }
         )
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="majority")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="majority", compound_id_col="connectivity"
+        )
         # Row 1 mean=6.25 → active. Row 2 mean=5.0 → inactive. They conflict.
         # Measurement-level: 5.5(inactive) + 7.0(active) from Row 1, 5.0(inactive) from Row 2
         # 1 active vs 2 inactive → inactive wins → drop Row 1, keep Row 2
@@ -642,7 +680,9 @@ class TestMeasurementLevelMajority(unittest.TestCase):
                 "standard_relation": ["=", "="],
             }
         )
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="majority")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="majority", compound_id_col="connectivity"
+        )
         # 1 active (7.0) vs 1 inactive (5.0) → tie → drop all
         self.assertEqual(len(result), 0)
 
@@ -657,7 +697,9 @@ class TestMeasurementLevelMajority(unittest.TestCase):
                 "standard_relation": ["=", ">"],
             }
         )
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="majority")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="majority", compound_id_col="connectivity"
+        )
         # = at 7.0: 1 active vote
         # > at 5.0|5.0|5.0: each 5.0 with > → 5.0 <= 6.0 → 3 inactive votes
         # 1 active vs 3 inactive → inactive wins → keep Row 2
@@ -687,7 +729,9 @@ class TestPostResolutionDeduplication(unittest.TestCase):
         # Row 0 (=, active), Row 1 (=, active), Row 2 (>, inactive) → conflict
         # Majority: 3 active (7.0, 7.5, 8.0) vs 1 inactive (5.0) → active wins
         # After resolution: Rows 0 and 1 survive. Dedup merges them into 1 row.
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="majority")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="majority", compound_id_col="connectivity"
+        )
         conn1_rows = result[result["connectivity"] == "CONN1"]
         self.assertEqual(len(conn1_rows), 1)
         self.assertEqual(conn1_rows.iloc[0]["activity_binary"], 1)
@@ -707,7 +751,9 @@ class TestPostResolutionDeduplication(unittest.TestCase):
         # Row 1: mean=4.5 → inactive. Individual: 4.5 with > → inactive
         # Measurement-level: 2 active vs 2 inactive → tie → drop all
         # Use 'relation' strategy instead: keeps "=" row, drops ">" row
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="relation")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="relation", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 1)
         # After dedup: the "=" row has 5.5 filtered out (inactive at threshold 6.0)
         raw_values = result.iloc[0]["pchembl_value"]
@@ -730,7 +776,9 @@ class TestPostResolutionDeduplication(unittest.TestCase):
         # 'relation' strategy: keep "=" row, drop ">" row
         # Within "=" row: 5.5(inactive), 7.0(active) → filter 5.5, keep 7.0
         # assay_chembl_id should also filter: drop ASSAY_A (pos 0), keep ASSAY_B (pos 1)
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="relation")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="relation", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 1)
         assays = str(result.iloc[0]["assay_chembl_id"])
         self.assertNotIn("ASSAY_A", assays)
@@ -750,7 +798,9 @@ class TestPostResolutionDeduplication(unittest.TestCase):
         )
         # 'relation' strategy: keep "=" row (active), drop ">" row
         # After dedup: both 7.0 and 8.0 agree (active), counts should be 2
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="relation")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="relation", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 1)
         self.assertEqual(result.iloc[0]["pchembl_value_counts"], 2)
 
@@ -768,7 +818,9 @@ class TestPostResolutionDeduplication(unittest.TestCase):
         # Row 0: = at 7.0 → active. Row 1: < at 8.0 → active. Row 2: > at 4.5 → inactive.
         # Majority: 2 active vs 1 inactive → active wins
         # After dedup: Rows 0 and 1 merged, standard_relation should be "=|<"
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="majority")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="majority", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 1)
         relation = str(result.iloc[0]["standard_relation"])
         self.assertIn("=", relation)
@@ -788,7 +840,9 @@ class TestPostResolutionDeduplication(unittest.TestCase):
         # 'relation' strategy: keep "=" row, drop ">" row. One row remains.
         # Within that row: 5.5(inactive), 7.0(active), 8.0(active)
         # Filter 5.5, keep 7.0 and 8.0
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="relation")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="relation", compound_id_col="connectivity"
+        )
         self.assertEqual(len(result), 1)
         raw_values = str(result.iloc[0]["pchembl_value"])
         self.assertNotIn("5.50", raw_values)
@@ -807,7 +861,9 @@ class TestPostResolutionDeduplication(unittest.TestCase):
             }
         )
         # CONN1-TARGET1 conflicts (active vs inactive). CONN2-TARGET1 has 1 row, no conflict.
-        result = binarize_aggregated_data(df, threshold=6.0, conflict_resolution="drop")
+        result = binarize_aggregated_data(
+            df, threshold=6.0, conflict_resolution="drop", compound_id_col="connectivity"
+        )
         # CONN1 rows dropped (conflict). CONN2 row untouched.
         conn2_rows = result[result["connectivity"] == "CONN2"]
         self.assertEqual(len(conn2_rows), 1)
@@ -828,6 +884,7 @@ class TestConflictReportEnhancements(unittest.TestCase):
             threshold=threshold,
             conflict_report_path=report_path,
             conflict_resolution=conflict_resolution,
+            compound_id_col="connectivity",
         )
 
         with open(report_path) as f:

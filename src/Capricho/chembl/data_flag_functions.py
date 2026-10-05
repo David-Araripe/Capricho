@@ -14,6 +14,7 @@ import re
 from typing import Optional
 
 import pandas as pd
+from rdkit import Chem
 
 from ..core.default_fields import (
     ASSAY_ID,
@@ -102,6 +103,34 @@ def flag_undefined_stereochemistry(df: pd.DataFrame) -> pd.DataFrame:
         criteria_func=lambda x: x > 0,
         target_column="undefined_stereocenters",
         comment_type="d",
+    )
+
+
+def flag_stereochemistry_removal(df: pd.DataFrame, smiles_column: str = "standard_smiles") -> pd.DataFrame:
+    """Annotate structures with specified stereo before intentionally removing it.
+
+    Achiral, undefined, missing and invalid structures are not marked. Evaluate
+    each distinct structure once; both atom and double-bond stereo are covered.
+    """
+
+    def has_stereo(smiles):
+        if pd.isna(smiles):
+            return False
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return False
+        original = Chem.MolToSmiles(mol)
+        Chem.RemoveStereochemistry(mol)
+        return original != Chem.MolToSmiles(mol)
+
+    unique_smiles = df[smiles_column].drop_duplicates()
+    stereo_by_smiles = dict(zip(unique_smiles, unique_smiles.apply(has_stereo)))
+    return add_comment(
+        df,
+        comment="Stereochemistry removed",
+        criteria_func=lambda values: values.map(stereo_by_smiles).fillna(False),
+        target_column=smiles_column,
+        comment_type="p",
     )
 
 
