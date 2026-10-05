@@ -6,11 +6,9 @@ import numpy as np
 import pandas as pd
 
 from Capricho.core.binarization import (
-    _generate_conflict_details,
     _max_confidence_score,
     binarize_aggregated_data,
     invert_relation_for_pchembl,
-    save_conflict_report,
 )
 from Capricho.core.default_fields import DATA_DROPPING_COMMENT
 

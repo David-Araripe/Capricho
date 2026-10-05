@@ -4,8 +4,8 @@ from tqdm import tqdm
 
 try:
     from pubchempy import Compound, get_compounds
-except ImportError:
-    raise ImportError("pubchempy is required for this module. To install: pip install pubchempy")
+except ImportError as exc:
+    raise ImportError("pubchempy is required for this module. To install: pip install pubchempy") from exc
 
 from ..core.rate_limit import rate_limit
 
@@ -52,5 +52,5 @@ def get_multiple_compounds(cpd_list, input_type: str = "name", n_jobs=4) -> list
         return results
 
     except Exception as e:
-        logger.error(f"Error in parallel processing: {str(e)}")
+        logger.error(f"Error in parallel processing: {e!s}")
         return []

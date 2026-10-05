@@ -1,7 +1,5 @@
 """Module containing helper functions for processing repeated elements in a DataFrame"""
 
-from typing import List
-
 import numpy as np
 import pandas as pd
 from chemFilters.chem.standardizers import ChemStandardizer
@@ -11,7 +9,7 @@ from .default_fields import multiple_value_cols
 from .pandas_helper import aggr_val_series, apply_func_grpd, assign_stats, format_value
 
 
-def repeated_indices_from_IDs_df(df: pd.DataFrame, columns: list) -> List[List[int]]:
+def repeated_indices_from_IDs_df(df: pd.DataFrame, columns: list) -> list[list[int]]:
     """Find repeated indices for given columns in a DataFrame.
 
     Args:
@@ -30,7 +28,7 @@ def repeated_indices_from_IDs_df(df: pd.DataFrame, columns: list) -> List[List[i
     concatenated_series = df[columns].astype(str).agg("-".join, axis=1)
 
     # Find duplicates using numpy operations
-    def find_duplicate_index(series: pd.Series) -> List[List[int]]:
+    def find_duplicate_index(series: pd.Series) -> list[list[int]]:
         arr = series.to_numpy()
         sidx = np.lexsort(arr.reshape(1, -1))
         sorted_series = series.iloc[sidx]
@@ -40,16 +38,16 @@ def repeated_indices_from_IDs_df(df: pd.DataFrame, columns: list) -> List[List[i
         idx = np.flatnonzero(duplicates_mask[1:] != duplicates_mask[:-1])
         # Extract original indices for duplicates
         sorted_indices = sorted_series.index.tolist()
-        return [sorted_indices[i:j] for i, j in zip(idx[::2], idx[1::2] + 1)]
+        return [sorted_indices[i:j] for i, j in zip(idx[::2], idx[1::2] + 1, strict=True)]
 
     final_repeat_idxs = find_duplicate_index(concatenated_series)
     return final_repeat_idxs
 
 
-def repeated_indices_from_array_series(series: pd.Series) -> List[List[int]]:
+def repeated_indices_from_array_series(series: pd.Series) -> list[list[int]]:
     """Function to find repeated arrays from a list of arrays"""
 
-    def find_duplicate_index(series: np.array) -> List[List[int]]:
+    def find_duplicate_index(series: np.array) -> list[list[int]]:
         """Group indices of duplicate rows
         From https://stackoverflow.com/a/46629623
 
@@ -70,7 +68,7 @@ def repeated_indices_from_array_series(series: pd.Series) -> List[List[int]]:
         # Get sorted indices
         sort_idxs = series.index[sidx].tolist()
         # Return list of lists of indices of duplicate rows
-        return [sort_idxs[i:j] for i, j in zip(idx[::2], idx[1::2] + 1)]
+        return [sort_idxs[i:j] for i, j in zip(idx[::2], idx[1::2] + 1, strict=True)]
 
     final_repeat_idxs = find_duplicate_index(series)
     return final_repeat_idxs
@@ -78,11 +76,11 @@ def repeated_indices_from_array_series(series: pd.Series) -> List[List[int]]:
 
 def process_repeat_mols(
     df: pd.DataFrame,
-    repeat_element_idxs: List[List[int]],
+    repeat_element_idxs: list[list[int]],
     solve_strat: str = "keep",
-    multiple_value_cols: List[str] = multiple_value_cols,
-    extra_id_cols: List[str] = [],
-    extra_multival_cols: List[str] = [],
+    multiple_value_cols: list[str] = multiple_value_cols,
+    extra_id_cols: list[str] | None = None,
+    extra_multival_cols: list[str] | None = None,
     chirality: bool = False,
     aggregate_mutants: bool = False,
     value_col: str = "pchembl_value",
@@ -131,6 +129,10 @@ def process_repeat_mols(
         values, canonicalized SMILES, and mean, standard deviation, median, and count
         columns for value_col.
     """
+    if extra_multival_cols is None:
+        extra_multival_cols = []
+    if extra_id_cols is None:
+        extra_id_cols = []
     df = df.copy()
     repeat_mapping = {}
     for idx in range(len(repeat_element_idxs)):
@@ -250,7 +252,7 @@ def process_repeat_mols(
     )
     logger.info("Canonicalizing smiles...")
     unique_smiles = smiles.drop_duplicates().tolist()
-    canonical_by_smiles = dict(zip(unique_smiles, smiles_canonizer(unique_smiles)))
+    canonical_by_smiles = dict(zip(unique_smiles, smiles_canonizer(unique_smiles), strict=True))
     df = df.assign(smiles=smiles.map(canonical_by_smiles))
 
     stereo_warning_cols = [] if chirality else ["might_be_racemic"]

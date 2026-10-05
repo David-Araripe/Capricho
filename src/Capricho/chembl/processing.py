@@ -1,6 +1,7 @@
 """Module holding functionalities for the ChEMBL API."""
 
-from typing import List, Literal, Optional, Sequence, Tuple, Union
+from typing import Literal
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -52,7 +53,7 @@ def convert_to_log10(df: pd.DataFrame) -> pd.DataFrame:
 
         return -np.log10(value_in_M)
 
-    desired_units = ["nM", "µM", "uM", "mM"]  # noqa: F841
+    desired_units = ["nM", "µM", "uM", "mM"]
     df = df.copy().pipe(flag_incompatible_units)  # flag incompatible units w/ pchembl calculation e.g.; %
 
     # Filter to convertible units for calculation, but preserve incompatible ones after
@@ -313,19 +314,19 @@ def process_bioactivities(
 
 
 def get_bioactivities_workflow(
-    molecule_chembl_ids: Optional[Union[list, str]] = None,
-    target_chembl_ids: Optional[Union[list, str]] = None,
-    assay_chembl_ids: Optional[Union[list, str]] = None,
-    document_chembl_ids: Optional[Union[list, str]] = None,
-    standard_relation: Optional[List[str]] = None,
-    standard_type: Optional[List[str]] = None,
-    standard_units: Optional[List[str]] = None,
-    confidence_scores: Union[list, Tuple] = (9, 8),
-    assay_types: Union[list, Tuple] = ("B", "F"),
-    chembl_release: Optional[int] = None,
-    additional_fields: Optional[List[str]] = None,
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    molecule_chembl_ids: list | str | None = None,
+    target_chembl_ids: list | str | None = None,
+    assay_chembl_ids: list | str | None = None,
+    document_chembl_ids: list | str | None = None,
+    standard_relation: list[str] | None = None,
+    standard_type: list[str] | None = None,
+    standard_units: list[str] | None = None,
+    confidence_scores: list | tuple = (9, 8),
+    assay_types: list | tuple = ("B", "F"),
+    chembl_release: int | None = None,
+    additional_fields: list[str] | None = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
     calculate_pchembl: bool = False,
     curate_annotation_errors: bool = True,
     require_document_date: bool = False,

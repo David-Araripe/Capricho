@@ -1,7 +1,6 @@
 """Explore the ChEMBL database schema without loading the entire database."""
 
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -112,7 +111,7 @@ def list_all_tables(conn):
             count = get_table_counts(conn, table_name)
             results.append({"table": table_name, "rows": count})
         except Exception as e:
-            results.append({"table": table_name, "rows": f"Error: {str(e)}"})
+            results.append({"table": table_name, "rows": f"Error: {e!s}"})
 
     return pd.DataFrame(results).sort_values(by="rows", ascending=False)
 
@@ -142,11 +141,11 @@ def explore_table(conn, table_name):
 def explorer_main(
     version: str | int | None = None,
     list_tables: bool = False,
-    table: str = None,
-    search_column: str = None,
-    query: str = None,
+    table: str | None = None,
+    search_column: str | None = None,
+    query: str | None = None,
     fmt: str = "markdown",
-    output_path: Optional[Path] = None,
+    output_path: Path | None = None,
     colorize: bool = False,
 ):
     """Main function for the ChEMBL schema explorer. This function is called by the CLI script.
@@ -191,7 +190,7 @@ def explorer_main(
                 print("\nSAMPLE DATA:")
                 print(format_dataframe(info["sample"], fmt, colorize))
             except Exception as e:
-                print(f"Error exploring table {table}: {str(e)}")
+                print(f"Error exploring table {table}: {e!s}")
 
         elif search_column:
             results = search_tables_for_column(conn, search_column)
@@ -210,7 +209,7 @@ def explorer_main(
                 print("\nQuery Result:")
                 print(format_dataframe(result, fmt, colorize))
             except Exception as e:
-                print(f"Error executing query: {str(e)}")
+                print(f"Error executing query: {e!s}")
 
         else:
             # Default: show database overview

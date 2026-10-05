@@ -234,7 +234,7 @@ def test_cli_stereo_policy_before_aggregation(fetched_stereoisomers, tmp_path, i
     preserves_stereo = "--no-chirality" not in flags
     standardized = pd.read_csv(tmp_path / "stereoisomers_not_aggregated.csv")
     assert len(standardized) == 2
-    assert dict(zip(standardized["molecule_chembl_id"], standardized["pchembl_value"])) == {
+    assert dict(zip(standardized["molecule_chembl_id"], standardized["pchembl_value"], strict=True)) == {
         "MOL1": 6.0,
         "MOL2": 7.0,
     }
@@ -247,7 +247,7 @@ def test_cli_stereo_policy_before_aggregation(fetched_stereoisomers, tmp_path, i
     assert aggregated["connectivity"].nunique() == 1
     assert aggregated["smiles"].str.contains("@").eq(separates_stereo).all()
     if separates_stereo:
-        assert dict(zip(aggregated["molecule_chembl_id"], aggregated["pchembl_value_mean"])) == {
+        assert dict(zip(aggregated["molecule_chembl_id"], aggregated["pchembl_value_mean"], strict=True)) == {
             "MOL1": 6.0,
             "MOL2": 7.0,
         }
@@ -273,7 +273,7 @@ def test_cli_stereo_policy_before_aggregation(fetched_stereoisomers, tmp_path, i
     assert "CompoundEquality." not in recipe["command"]
     assert ("--chirality" if preserves_stereo else "--no-chirality") in recipe["command"]
     assert "--dont-chirality" not in recipe["command"]
-    replay = CliRunner().invoke(app, shlex.split(recipe["command"])[1:] + ["--skip-recipe"])
+    replay = CliRunner().invoke(app, [*shlex.split(recipe["command"])[1:], "--skip-recipe"])
     assert replay.exit_code == 0, (replay.output, replay.exception)
     pd.testing.assert_frame_equal(pd.read_csv(output), aggregated)
     # Source structures remain intact, even when their processed forms lose stereo.
@@ -395,7 +395,7 @@ def test_cli_default_identity_is_inchikey_through_prepare_and_binarize(
     labels = pd.read_csv(binary_path)
     assert len(labels) == expected_rows
     if preserves_stereo:
-        assert dict(zip(labels["molecule_chembl_id"], labels["activity_binary"])) == {"MOL1": 0, "MOL2": 1}
+        assert dict(zip(labels["molecule_chembl_id"], labels["activity_binary"], strict=True)) == {"MOL1": 0, "MOL2": 1}
 
 
 def test_python_defaults_preserve_stereo_identity_in_all_stages():

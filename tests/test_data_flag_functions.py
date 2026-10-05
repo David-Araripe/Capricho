@@ -1,6 +1,7 @@
 """Tests for data_flag_functions module."""
 
 import unittest
+from typing import ClassVar
 
 import pandas as pd
 
@@ -137,7 +138,7 @@ class TestFlagActivityCommentReview(unittest.TestCase):
 class TestActivityCommentReviewRealChEMBLRows(unittest.TestCase):
     """Regression fixture of traceable ChEMBL 36 activities."""
 
-    FIXTURE = [
+    FIXTURE: ClassVar[list[tuple]] = [
         # activity_id, assay_chembl_id, standard_type, relation, value, comment
         (1230176, "CHEMBL815031", "Inhibition", "=", None, "Not Active"),
         (1233640, "CHEMBL816326", "Inhibition", "=", None, "Not Active"),
@@ -150,7 +151,7 @@ class TestActivityCommentReviewRealChEMBLRows(unittest.TestCase):
         (14249048, "CHEMBL3215220", "Ki", "=", 21100.0, "inactive"),
     ]
 
-    UNRELATED = [
+    UNRELATED: ClassVar[list[tuple]] = [
         (900000001, "CHEMBL999901", "IC50", "=", 50.0, "Compound bound to the standard reference"),
         (900000002, "CHEMBL999902", "IC50", "=", 75.0, "Active"),
     ]
@@ -686,10 +687,12 @@ class TestFlagStereochemistryRemoval(unittest.TestCase):
     def test_only_specified_stereo_is_flagged_and_source_is_unchanged(self):
         structures = ["C[C@H](O)Cl", "F/C=C/F", "CC(O)Cl", "CCO", None, pd.NA, "", "invalid"]
         df = pd.DataFrame({"standard_smiles": structures, "data_processing_comment": None})
+        original_smiles = df["standard_smiles"].copy()
         result = flag_stereochemistry_removal(df)
         flag = ProcessingComment.STEREOCHEMISTRY_REMOVED.value
         self.assertEqual(result["data_processing_comment"].tolist(), [flag, flag, "", "", "", "", "", ""])
-        self.assertEqual(result["standard_smiles"].tolist(), structures)
+        # pandas 3 infers string dtype and normalizes None/pd.NA at construction.
+        pd.testing.assert_series_equal(result["standard_smiles"], original_smiles)
         self.assertNotIn("data_dropping_comment", result.columns)
         self.assertIn(flag, get_all_comments())
 
