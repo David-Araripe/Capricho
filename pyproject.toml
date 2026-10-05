@@ -7,13 +7,14 @@ name = "capricho"
 dynamic = ["version"]
 description = "Transparent, flexible and reproducible ChEMBL data curation, aggregation and analysis."
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = { file = "LICENSE" }
 keywords = ["ChEMBL", "drug discovery", "QSAR", "cheminformatics", "activity curation"]
 authors = [{ name = "David Araripe", email = "david@araripe.nl" }]
 maintainers = [{ name = "David Araripe", email = "david@araripe.nl" }]
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -68,7 +69,7 @@ version = {attr = "Capricho.__version__"}
 
 [tool.ruff]
 line-length = 110
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "UP", "B", "YTT", "RUF"]
@@ -89,7 +90,7 @@ profile = "black"
 
 [tool.black]
 line-length = 110
-target-version = ['py311']
+target-version = ['py310']
 exclude = '''
 (
     asv_bench/env
