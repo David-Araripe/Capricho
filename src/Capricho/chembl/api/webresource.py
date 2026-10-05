@@ -1,7 +1,5 @@
 """Module holding functionalities for the ChEMBL API using the webresource client as the backend."""
 
-from typing import Optional, Tuple, Union
-
 import pandas as pd
 from chembl_webresource_client.new_client import new_client
 
@@ -226,12 +224,12 @@ def get_assay_table(
 
 
 def get_activity_table(
-    molecule_chembl_ids: Optional[list] = None,
-    target_chembl_ids: Optional[list] = None,
-    assay_chembl_ids: Optional[list] = None,
-    document_chembl_ids: Optional[list] = None,
+    molecule_chembl_ids: list | None = None,
+    target_chembl_ids: list | None = None,
+    assay_chembl_ids: list | None = None,
+    document_chembl_ids: list | None = None,
     **kwargs,
-) -> Tuple[pd.DataFrame, dict]:
+) -> tuple[pd.DataFrame, dict]:
     """Take a list of molecule chembl ids and get their respective bioactivities in ChEMBL.
     Args:
         molecule_chembl_id: list of molecule ChEMBL IDs to fecth bioactivities. Defaults to None.
@@ -281,13 +279,13 @@ def get_activity_table(
 
 
 def get_full_activity_data(
-    molecule_chembl_ids: Optional[list] = None,
-    target_chembl_ids: Optional[list] = None,
-    assay_chembl_ids: Optional[list] = None,
-    document_chembl_ids: Optional[list] = None,
-    confidence_scores: Union[list, Tuple] = (9, 8),
-    assay_types: Union[list, Tuple] = ("B", "F"),
-    chembl_release: Optional[int] = None,
+    molecule_chembl_ids: list | None = None,
+    target_chembl_ids: list | None = None,
+    assay_chembl_ids: list | None = None,
+    document_chembl_ids: list | None = None,
+    confidence_scores: list | tuple = (9, 8),
+    assay_types: list | tuple = ("B", "F"),
+    chembl_release: int | None = None,
     add_document_info: bool = True,
 ) -> pd.DataFrame:
     """

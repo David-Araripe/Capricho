@@ -2,7 +2,7 @@
 
 from enum import Enum
 from itertools import combinations
-from typing import List, NamedTuple, Optional, Tuple, Union
+from typing import NamedTuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,6 +31,7 @@ class ProcessingComment(str, Enum):
 
     CALCULATED_PCHEMBL = "Calculated pChEMBL"
     SALT_SOLVENT_REMOVED = "Salt/solvent removed"
+    STEREOCHEMISTRY_REMOVED = "Stereochemistry removed"
     PCHEMBL_DUPLICATION_ACROSS_DOCUMENTS = "pChEMBL Duplication Across Documents"
     UNIT_CONVERTED = "Unit converted to"  # Example: "Unit converted to nM from uM"
 
@@ -130,6 +131,7 @@ def get_all_comments() -> list[str]:
         ProcessingComment.CALCULATED_PCHEMBL.value,
         ProcessingComment.PCHEMBL_DUPLICATION_ACROSS_DOCUMENTS.value,
         ProcessingComment.UNIT_CONVERTED.value,
+        ProcessingComment.STEREOCHEMISTRY_REMOVED.value,
     ]
 
 
@@ -579,7 +581,7 @@ def recalculate_aggregated_stats(
 def explode_assay_comparability(
     subset: pd.DataFrame,
     sep_str: str = "|",
-    extra_multival_cols: Optional[list[str]] = None,
+    extra_multival_cols: list[str] | None = None,
     value_column: str = "pchembl_value",
 ) -> pd.DataFrame:
     """Explode dataset to create pairwise comparisons between assays for the same compound.
@@ -725,7 +727,7 @@ def format_units_latex(units: str) -> str:
 def format_axis_label(
     property_name: str = "value",
     log_transform: bool = False,
-    units: Optional[str] = None,
+    units: str | None = None,
 ) -> str:
     """Format axis label with LaTeX math notation for publication-quality figures.
 
@@ -805,9 +807,9 @@ def _log_comparability_metrics(
     yp: np.ndarray,
     label: str = "",
     is_log_scale: bool = True,
-    rho: Optional[float] = None,
-    r2: Optional[float] = None,
-    tau: Optional[float] = None,
+    rho: float | None = None,
+    r2: float | None = None,
+    tau: float | None = None,
 ) -> None:
     """Log quantitative comparability metrics for pairwise assay comparisons.
 
@@ -859,16 +861,16 @@ def plot_subset(
     title: str = "",
     color: str = "slategray",
     alpha: float = 0.3,
-    figsize: Tuple[float, float] = (5, 5),
+    figsize: tuple[float, float] = (5, 5),
     value_column: str = "pchembl_value",
     log_transform: bool = False,
     log_scale_factor: float = 1.0,
-    axis_label: Optional[str] = None,
-    axis_limits: Optional[Tuple[float, float]] = None,
+    axis_label: str | None = None,
+    axis_limits: tuple[float, float] | None = None,
     reference_lines: bool = True,
-    units: Optional[str] = None,
+    units: str | None = None,
     show_n: bool = True,
-) -> Tuple[plt.Figure, plt.Axes]:
+) -> tuple[plt.Figure, plt.Axes]:
     """Create scatter plot comparing values across assays with correlation metrics.
 
     Args:
@@ -1041,11 +1043,11 @@ _COVERAGE_PANELS = [
 
 def plot_cross_assay_coverage(
     coverage: pd.DataFrame,
-    labels: Optional[dict] = None,
-    color: Union[str, dict] = DEFAULT_COV_BAR_COLOR,
-    title: Optional[str] = None,
-    figsize: Optional[Tuple[float, float]] = None,
-) -> Tuple[plt.Figure, np.ndarray]:
+    labels: dict | None = None,
+    color: str | dict = DEFAULT_COV_BAR_COLOR,
+    title: str | None = None,
+    figsize: tuple[float, float] | None = None,
+) -> tuple[plt.Figure, np.ndarray]:
     """Plot how much of each dataset cross-assay comparability can reach.
 
     Comparability metrics say nothing about how much data they were computed on, so the
@@ -1106,7 +1108,7 @@ def plot_cross_assay_coverage(
     labels = labels or {}
     tick_labels = [labels.get(dataset, dataset) for dataset in coverage["dataset"]]
 
-    for ax, panel in zip(axes, _COVERAGE_PANELS):
+    for ax, panel in zip(axes, _COVERAGE_PANELS, strict=False):
         ax.set_facecolor(cov_surf_color)
         ax.barh(
             y_positions,
@@ -1247,20 +1249,20 @@ def build_query_string(comment: str, value_column: str = "pchembl_value") -> str
 
 def plot_multi_panel_comparability(
     exploded_subset: pd.DataFrame,
-    comments: List[str],
+    comments: list[str],
     title: str = "Comparability Across Flagged Data",
-    figsize: Tuple[float, float] = (20, 8),
+    figsize: tuple[float, float] = (20, 8),
     ncols: int = 5,
     value_column: str = "pchembl_value",
     log_transform: bool = False,
     log_scale_factor: float = 1.0,
-    axis_label: Optional[str] = None,
-    axis_limits: Optional[Tuple[float, float]] = None,
+    axis_label: str | None = None,
+    axis_limits: tuple[float, float] | None = None,
     reference_lines: bool = True,
-    units: Optional[str] = None,
+    units: str | None = None,
     alpha: float = 0.5,
     show_n: bool = True,
-) -> Tuple[plt.Figure, np.ndarray]:
+) -> tuple[plt.Figure, np.ndarray]:
     """Create multi-panel plot showing comparability for different data quality flags.
 
     Args:
@@ -1310,7 +1312,7 @@ def plot_multi_panel_comparability(
     # tab10 keeps every panel saturated. tab20 alternates dark/light pairs, tinting
     # every even-numbered panel too faintly to read.
     palette = colormaps["tab10"].colors
-    colors = [tuple([*palette[i % len(palette)]] + [1]) for i in range(len(comments_with_data))]
+    colors = [tuple([*palette[i % len(palette)], 1]) for i in range(len(comments_with_data))]
 
     fig, axs = plt.subplots(nrows, ncols, figsize=figsize)
     axs_flat = axs.flatten() if nrows > 1 else [axs] if ncols == 1 else axs
@@ -1345,7 +1347,7 @@ def plot_multi_panel_comparability(
         label_base = format_axis_label(property_name, log_transform=log_transform, units=units)
 
     for idx, color, obs, ax in zip(
-        range(1, len(comments_with_data) + 1), colors, comments_with_data, axs_flat
+        range(1, len(comments_with_data) + 1), colors, comments_with_data, axs_flat, strict=False
     ):
         query_str = build_query_string(obs, value_column=value_column)
         subset = exploded_subset.query(query_str)

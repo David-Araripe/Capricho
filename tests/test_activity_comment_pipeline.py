@@ -98,7 +98,9 @@ def test_flag_is_reported_at_measurement_level():
 def test_removal_is_opt_in():
     aggregated = aggregated_frame()
 
-    assert "Not Active" in "".join(clean_data(aggregated)["activity_comment"].astype(str))
+    assert "Not Active" in "".join(
+        clean_data(aggregated, compound_col="connectivity")["activity_comment"].astype(str)
+    )
     assert "Not Active" not in "".join(
-        clean_data(aggregated, drop_flags=[FLAG])["activity_comment"].astype(str)
+        clean_data(aggregated, drop_flags=[FLAG], compound_col="connectivity")["activity_comment"].astype(str)
     )

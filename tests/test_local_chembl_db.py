@@ -13,7 +13,6 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Optional
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -63,8 +62,8 @@ class LocalDatabaseTestCase(unittest.TestCase):
         self,
         version: str,
         with_release_column: bool = True,
-        reports: Optional[str] = "",
-        name: Optional[str] = None,
+        reports: str | None = "",
+        name: str | None = None,
     ) -> Path:
         """Write a ChEMBL-shaped database for a release into the external store.
 

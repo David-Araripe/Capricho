@@ -11,9 +11,9 @@ used to annotate processing steps that occurred during the data processing pipel
 """
 
 import re
-from typing import Optional
 
 import pandas as pd
+from rdkit import Chem
 
 from ..core.default_fields import (
     ASSAY_ID,
@@ -105,6 +105,34 @@ def flag_undefined_stereochemistry(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def flag_stereochemistry_removal(df: pd.DataFrame, smiles_column: str = "standard_smiles") -> pd.DataFrame:
+    """Annotate structures with specified stereo before intentionally removing it.
+
+    Achiral, undefined, missing and invalid structures are not marked. Evaluate
+    each distinct structure once; both atom and double-bond stereo are covered.
+    """
+
+    def has_stereo(smiles):
+        if pd.isna(smiles):
+            return False
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return False
+        original = Chem.MolToSmiles(mol)
+        Chem.RemoveStereochemistry(mol)
+        return original != Chem.MolToSmiles(mol)
+
+    unique_smiles = df[smiles_column].drop_duplicates()
+    stereo_by_smiles = dict(zip(unique_smiles, unique_smiles.apply(has_stereo), strict=True))
+    return add_comment(
+        df,
+        comment="Stereochemistry removed",
+        criteria_func=lambda values: values.map(stereo_by_smiles).fillna(False),
+        target_column=smiles_column,
+        comment_type="p",
+    )
+
+
 def flag_zero_values(df: pd.DataFrame, column: str = "standard_value") -> pd.DataFrame:
     """Mark rows where the measurement value is exactly zero.
 
@@ -152,7 +180,7 @@ def flag_min_assay_size(df: pd.DataFrame, min_assay_size: int = 0) -> pd.DataFra
         )
 
 
-def flag_max_assay_size(df: pd.DataFrame, max_assay_size: Optional[int] = None) -> pd.DataFrame:
+def flag_max_assay_size(df: pd.DataFrame, max_assay_size: int | None = None) -> pd.DataFrame:
     """Mark assays for removal based on size greater than the specified maximum assay size."""
     if max_assay_size is None:
         logger.info("Maximum assay size is not set. Skipping filtering based on maximum assay size.")
@@ -460,6 +488,7 @@ def flag_censored_activity_comment(df: pd.DataFrame) -> pd.DataFrame:
     if "activity_comment" not in df.columns:
         logger.debug("Column 'activity_comment' not found. Skipping activity comment review flagging.")
         return df
+    # Only check for duplicates in discrete measurements (standard_relation='=')
     if "standard_relation" not in df.columns:
         logger.warning("Column 'standard_relation' not found. Cannot flag activity comment conflicts.")
         return df
@@ -509,17 +538,8 @@ def flag_salt_or_solvent_removal(df: pd.DataFrame) -> pd.DataFrame:
 
 def flag_inter_document_duplication(
     df: pd.DataFrame,
-    key_subset: list[str] = [
-        "molecule_chembl_id",
-        "standard_smiles",
-        "canonical_smiles",
-        "pchembl_value",
-        "standard_relation",
-        "target_chembl_id",
-        "mutation",
-        "target_organism",
-    ],
-    diff_subset: Optional[list[str]] = ["document_chembl_id"],
+    key_subset: list[str] | None = None,
+    diff_subset: list[str] | tuple[str, ...] | None = ("document_chembl_id",),
 ) -> pd.DataFrame:
     """Marks rows with a potential duplication after SMILES standardization & salt removal.
 
@@ -540,6 +560,19 @@ def flag_inter_document_duplication(
         pd.DataFrame: DataFrame with duplicates marked in `data_processing_comment`
                       (or `data_dropping_comment` if comment_type='d' was used).
     """
+    if diff_subset is not None:
+        diff_subset = list(diff_subset)
+    if key_subset is None:
+        key_subset = [
+            "molecule_chembl_id",
+            "standard_smiles",
+            "canonical_smiles",
+            "pchembl_value",
+            "standard_relation",
+            "target_chembl_id",
+            "mutation",
+            "target_organism",
+        ]
     # Only check for duplicates in discrete measurements (standard_relation='=')
     if "standard_relation" not in df.columns:
         logger.warning(

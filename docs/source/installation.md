@@ -1,6 +1,6 @@
 # Installation
 
-CAPRICHO requires Python 3.10 or later.
+CAPRICHO requires Python 3.10 or later. Python 3.10–3.14 are tested in CI.
 
 ## With pip
 

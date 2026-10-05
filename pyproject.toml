@@ -13,7 +13,12 @@ keywords = ["ChEMBL", "drug discovery", "QSAR", "cheminformatics", "activity cur
 authors = [{ name = "David Araripe", email = "david@araripe.nl" }]
 maintainers = [{ name = "David Araripe", email = "david@araripe.nl" }]
 classifiers = [
-  # "TODO",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: 3",
   "Topic :: Scientific/Engineering :: Chemistry",
   "License :: OSI Approved :: MIT License",
@@ -65,9 +70,18 @@ version = {attr = "Capricho.__version__"}
 
 [tool.ruff]
 line-length = 110
-target-version = "py39"
-fix = true
-ignore = ['E501'] # sometimes it goes longer on the docstrings...
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "UP", "B", "YTT", "RUF"]
+# Scientific symbols are intentional; StrEnum changes str()/format() of public enums.
+ignore = ["RUF001", "RUF002", "RUF003", "UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+# Typer evaluates these defaults when constructing the CLI.
+"src/Capricho/cli/main.py" = ["B008"]
+# This concrete base class is also directly usable by existing callers.
+"src/Capricho/unichem.py" = ["B024"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -77,7 +91,7 @@ profile = "black"
 
 [tool.black]
 line-length = 110
-target-version = ['py39']
+target-version = ['py310']
 exclude = '''
 (
     asv_bench/env

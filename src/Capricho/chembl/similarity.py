@@ -169,7 +169,7 @@ def _describe_queries(smiles: list[str], standardize: bool, chirality: bool, n_j
         )
         standardized = {
             original: clean_mixtures(smi) if isinstance(smi, str) else None
-            for original, smi in zip(parsed, stdzer(list(parsed.values())))
+            for original, smi in zip(parsed, stdzer(list(parsed.values())), strict=True)
         }
     else:
         standardized = {smi: smi for smi in parsed}
@@ -179,11 +179,13 @@ def _describe_queries(smiles: list[str], standardize: bool, chirality: bool, n_j
     # conversion each, which dominates the runtime for large query lists.
     unique = list(dict.fromkeys(smi for smi in standard_smiles if isinstance(smi, str)))
     inchikey_writer = InchiHandling(convert_to="inchikey", n_jobs=n_jobs, from_smi=True, progress=False)
-    keys = {smi: key for smi, key in zip(unique, inchikey_writer(unique)) if key} if unique else {}
+    keys = (
+        {smi: key for smi, key in zip(unique, inchikey_writer(unique), strict=True) if key} if unique else {}
+    )
 
     query_inchikeys = [keys.get(smi) for smi in standard_smiles]
 
-    for smi, key in zip(smiles, query_inchikeys):
+    for smi, key in zip(smiles, query_inchikeys, strict=True):
         if key is None:
             logger.warning(f"Could not derive an InChI key for the query SMILES: {smi}")
 
@@ -265,7 +267,8 @@ def search_by_structure(
         "query_inchikey",
         "connectivity",
         "match_type",
-    ] + COMPOUND_HIT_COLUMNS
+        *COMPOUND_HIT_COLUMNS,
+    ]
     if not query_list:
         result = pd.DataFrame(columns=output_columns)
         result.attrs["capricho_search"] = _search_provenance(
@@ -386,7 +389,7 @@ def search_by_similarity(
         raise ValueError(f"'metric' must be one of {sorted(SIMILARITY_METRICS)}, got {metric!r}")
 
     query_list = _as_smiles_list(smiles)
-    output_columns = ["query_index", "query_smiles", "similarity"] + COMPOUND_HIT_COLUMNS
+    output_columns = ["query_index", "query_smiles", "similarity", *COMPOUND_HIT_COLUMNS]
     provenance = _search_provenance(
         version, search_type="similarity", threshold=threshold, top_k=top_k, metric=metric
     )

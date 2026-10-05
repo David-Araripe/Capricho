@@ -1,10 +1,11 @@
 """Tests for data_flag_functions module."""
 
 import unittest
+from typing import ClassVar
 
 import pandas as pd
 
-from Capricho.analysis import DroppingComment, get_all_comments
+from Capricho.analysis import DroppingComment, ProcessingComment, get_all_comments
 from Capricho.chembl.data_flag_functions import (
     REVIEW_ACTIVITY_COMMENTS,
     flag_censored_activity_comment,
@@ -12,6 +13,7 @@ from Capricho.chembl.data_flag_functions import (
     flag_insufficient_assay_overlap,
     flag_inter_document_duplication,
     flag_missing_document_date,
+    flag_stereochemistry_removal,
 )
 from Capricho.core.default_fields import DATA_DROPPING_COMMENT
 
@@ -136,7 +138,7 @@ class TestFlagActivityCommentReview(unittest.TestCase):
 class TestActivityCommentReviewRealChEMBLRows(unittest.TestCase):
     """Regression fixture of traceable ChEMBL 36 activities."""
 
-    FIXTURE = [
+    FIXTURE: ClassVar[list[tuple]] = [
         # activity_id, assay_chembl_id, standard_type, relation, value, comment
         (1230176, "CHEMBL815031", "Inhibition", "=", None, "Not Active"),
         (1233640, "CHEMBL816326", "Inhibition", "=", None, "Not Active"),
@@ -149,7 +151,7 @@ class TestActivityCommentReviewRealChEMBLRows(unittest.TestCase):
         (14249048, "CHEMBL3215220", "Ki", "=", 21100.0, "inactive"),
     ]
 
-    UNRELATED = [
+    UNRELATED: ClassVar[list[tuple]] = [
         (900000001, "CHEMBL999901", "IC50", "=", 50.0, "Compound bound to the standard reference"),
         (900000002, "CHEMBL999902", "IC50", "=", 75.0, "Active"),
     ]
@@ -679,6 +681,31 @@ class TestFlagZeroValues(unittest.TestCase):
                        "Zero Value" not in str(result.loc[0, "data_dropping_comment"]))
         # Second row (zero) should be flagged
         self.assertIn("Zero Value", str(result.loc[1, "data_dropping_comment"]))
+
+
+class TestFlagStereochemistryRemoval(unittest.TestCase):
+    def test_only_specified_stereo_is_flagged_and_source_is_unchanged(self):
+        structures = ["C[C@H](O)Cl", "F/C=C/F", "CC(O)Cl", "CCO", None, pd.NA, "", "invalid"]
+        df = pd.DataFrame({"standard_smiles": structures, "data_processing_comment": None})
+        original_smiles = df["standard_smiles"].copy()
+        result = flag_stereochemistry_removal(df)
+        flag = ProcessingComment.STEREOCHEMISTRY_REMOVED.value
+        self.assertEqual(result["data_processing_comment"].tolist(), [flag, flag, "", "", "", "", "", ""])
+        # pandas 3 infers string dtype and normalizes None/pd.NA at construction.
+        pd.testing.assert_series_equal(result["standard_smiles"], original_smiles)
+        self.assertNotIn("data_dropping_comment", result.columns)
+        self.assertIn(flag, get_all_comments())
+
+    def test_alternate_column_and_existing_comment(self):
+        df = pd.DataFrame({"canonical_smiles": ["C[C@@H](O)Cl"], "data_processing_comment": ["Existing"]})
+        result = flag_stereochemistry_removal(df, smiles_column="canonical_smiles")
+        self.assertEqual(result["data_processing_comment"].iloc[0], "Existing & Stereochemistry removed")
+
+    def test_empty_dataframe(self):
+        df = pd.DataFrame({"standard_smiles": pd.Series(dtype=str)})
+        result = flag_stereochemistry_removal(df)
+        self.assertTrue(result.empty)
+        self.assertIn("data_processing_comment", result.columns)
 
 
 if __name__ == "__main__":

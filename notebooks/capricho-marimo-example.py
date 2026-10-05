@@ -214,7 +214,7 @@ def _(
         y = pd.to_numeric(pd.Series(y), errors="coerce").to_numpy(dtype=float)
         mask = np.isfinite(x) & np.isfinite(y)
         x, y = x[mask], y[mask]
-        n = int(len(x))
+        n = len(x)
         out = {"n": n, "r2": None, "spearman": None, "kendall": None, "within_03": None, "within_10": None}
         if n < min_points or np.ptp(x) == 0 or np.ptp(y) == 0:
             return out
@@ -357,8 +357,8 @@ def _(
             )
             conn = str(r.get("connectivity", ""))[:22]
 
-            def _pane(smiles, val, assay_col):
-                aid = r.get(assay_col, "")
+            def _pane(smiles, val, assay_col, row=r):
+                aid = row.get(assay_col, "")
                 return (
                     '<div style="text-align:center;flex:1;">'
                     f'<div style="background:#fff;border-radius:8px;padding:4px;">{_svg(smiles)}</div>'
@@ -879,7 +879,7 @@ def _(VALID_CONFLICT_STRATEGIES, data_props, loaded_df, mo, pd):
         show_value=True,
     )
     conflict_selector = mo.ui.dropdown(
-        options=["None"] + sorted(VALID_CONFLICT_STRATEGIES),
+        options=["None", *sorted(VALID_CONFLICT_STRATEGIES)],
         value="None",
         label="Conflict resolution",
     )

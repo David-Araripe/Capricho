@@ -53,8 +53,8 @@ def smi_to_mixed_FP(smi, morgan_kwargs: dict, rdkit_kwargs: dict) -> np.ndarray:
 def calculate_mixed_FPs(
     smiles: list,
     n_jobs: int = 8,
-    morgan_kwargs: dict = None,
-    rdkit_kwargs: dict = None,
+    morgan_kwargs: dict | None = None,
+    rdkit_kwargs: dict | None = None,
     return_stacked: bool = False,
     chunk_size: int = 50,
 ):

@@ -7,7 +7,7 @@ from contextlib import closing, contextmanager
 from functools import lru_cache
 from pathlib import Path
 from textwrap import dedent
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
+from collections.abc import Iterator, Sequence
 
 import pandas as pd
 import pystow
@@ -61,13 +61,13 @@ def _get_kwargs_where_clauses(**kwargs):
     return where_clauses
 
 
-def _get_config_file(version: Optional[Union[int, str]] = None) -> Path:
+def _get_config_file(version: int | str | None = None) -> Path:
     version = version if version is not None else _latest_version()
     version = str(version) if isinstance(version, int) else version
     return pystow.join(*(PYSTOW_PARTS), name=PYSTOW_CONFIG["name"].format(version=version))
 
 
-def _version_from_filename(path: Path) -> Optional[str]:
+def _version_from_filename(path: Path) -> str | None:
     """Read the ChEMBL release out of a database file name, or None if it doesn't carry one."""
     match = CHEMBL_DB_FILENAME.match(path.name)
     return match.group(1).replace("_", ".") if match else None
@@ -97,7 +97,7 @@ def _validate_chembl_db(path: Path) -> None:
         )
 
 
-def _read_reported_release(path: Path) -> Optional[str]:
+def _read_reported_release(path: Path) -> str | None:
     """Read the ChEMBL release a database states for itself, or None if it does not state one.
 
     Args:
@@ -153,7 +153,7 @@ def _check_release_matches(path: Path, claimed: str) -> None:
     logger.debug(f"{path} confirms it is ChEMBL {reported}")
 
 
-def _discover_chembl_dbs(path: Path, version: Optional[Union[int, str]] = None) -> Dict[str, Path]:
+def _discover_chembl_dbs(path: Path, version: int | str | None = None) -> dict[str, Path]:
     """Map ChEMBL release to database file for a file or directory the user points at.
 
     Args:
@@ -203,8 +203,8 @@ def _discover_chembl_dbs(path: Path, version: Optional[Union[int, str]] = None) 
 
 
 def set_chembl_db_path(
-    path: Union[str, Path], version: Optional[Union[int, str]] = None
-) -> Dict[str, Path]:
+    path: str | Path, version: int | str | None = None
+) -> dict[str, Path]:
     """Register an already-available ChEMBL SQLite database so queries read it where it lies.
 
     Writes a configuration file per release under `~/.data/chembl/`, which
@@ -240,7 +240,7 @@ def set_chembl_db_path(
     return databases
 
 
-def unset_chembl_db_path(version: Optional[Union[int, str]] = None) -> bool:
+def unset_chembl_db_path(version: int | str | None = None) -> bool:
     """Forget the database registered for a release, so it is downloaded again when queried.
 
     Args:
@@ -279,7 +279,7 @@ def connect_chembl(configs: dict) -> Iterator[sqlite3.Connection]:
             yield conn
 
 
-def run_query(sql: str, configs: dict, params: Optional[Sequence] = None) -> pd.DataFrame:
+def run_query(sql: str, configs: dict, params: Sequence | None = None) -> pd.DataFrame:
     """Run a SQL query against the ChEMBL database described by a configuration mapping.
 
     Args:
@@ -295,8 +295,8 @@ def run_query(sql: str, configs: dict, params: Optional[Sequence] = None) -> pd.
 
 
 def check_and_download_chembl_db(
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
 ) -> dict:
     """Check if the ChEMBL database is present. Download and extract it if not. After extraction,
     remove the tarball to free up space. This method is also used to assert the correct downloaded
@@ -356,9 +356,9 @@ def check_and_download_chembl_db(
 
 
 def get_document_table_sql(
-    document_chembl_ids: Optional[List[str]] = None,
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    document_chembl_ids: list[str] | None = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
     **kwargs,
 ) -> pd.DataFrame:
     """Get publication details for a list of ChEMBL document IDs using SQL backend.
@@ -412,9 +412,9 @@ def get_document_table_sql(
 
 
 def get_compound_table_sql(
-    molecule_chembl_ids: Optional[List[str]] = None,
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    molecule_chembl_ids: list[str] | None = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
     **kwargs,
 ) -> pd.DataFrame:
     """Get information on molecules from ChEMBL using SQL backend.
@@ -540,10 +540,10 @@ def _batches(values: Sequence, size: int = SQLITE_LOOKUP_BATCH_SIZE):
 
 
 def get_compounds_by_inchikey_sql(
-    inchi_keys: Optional[Sequence[str]] = None,
-    connectivities: Optional[Sequence[str]] = None,
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    inchi_keys: Sequence[str] | None = None,
+    connectivities: Sequence[str] | None = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
 ) -> pd.DataFrame:
     """Look up compounds by full standard InChIKey and/or connectivity block.
 
@@ -600,8 +600,8 @@ def get_compounds_by_inchikey_sql(
 
 def get_compounds_by_molregno_sql(
     molregnos: Sequence[int],
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
 ) -> pd.DataFrame:
     """Look up compounds by the internal ChEMBL ``molregno`` identifier."""
     if len(molregnos) == 0:
@@ -623,11 +623,11 @@ def get_compounds_by_molregno_sql(
 
 
 def get_assay_table_sql(
-    assay_chembl_ids: Optional[List[str]] = None,
-    confidence_scores: Optional[List[int]] = None,
-    assay_types: Optional[List[str]] = None,
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    assay_chembl_ids: list[str] | None = None,
+    confidence_scores: list[int] | None = None,
+    assay_types: list[str] | None = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
     **kwargs,
 ) -> pd.DataFrame:
     """Get assay information from ChEMBL using SQL backend.
@@ -710,14 +710,14 @@ def get_assay_table_sql(
 
 
 def get_activity_table_sql(
-    molecule_chembl_ids: Optional[List[str]] = None,
-    target_chembl_ids: Optional[List[str]] = None,
-    assay_chembl_ids: Optional[List[str]] = None,
-    document_chembl_ids: Optional[List[str]] = None,
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    molecule_chembl_ids: list[str] | None = None,
+    target_chembl_ids: list[str] | None = None,
+    assay_chembl_ids: list[str] | None = None,
+    document_chembl_ids: list[str] | None = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
     **kwargs,
-) -> Tuple[pd.DataFrame, dict]:
+) -> tuple[pd.DataFrame, dict]:
     """Get bioactivity data from ChEMBL using SQL backend.
 
     Args:
@@ -838,19 +838,19 @@ def get_activity_table_sql(
 
 
 def get_full_activity_data_sql(
-    molecule_chembl_ids: Optional[Union[list, str]] = None,
-    target_chembl_ids: Optional[Union[list, str]] = None,
-    assay_chembl_ids: Optional[Union[list, str]] = None,
-    document_chembl_ids: Optional[Union[list, str]] = None,
-    standard_relation: Optional[List[str]] = None,
-    standard_type: Optional[List[str]] = None,
-    standard_units: Optional[List[str]] = None,
-    confidence_scores: Union[list, Tuple] = (9, 8),
-    assay_types: Union[list, Tuple] = ("B", "F"),
-    chembl_release: Optional[int] = None,
-    additional_fields: Optional[List[str]] = None,
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    molecule_chembl_ids: list | str | None = None,
+    target_chembl_ids: list | str | None = None,
+    assay_chembl_ids: list | str | None = None,
+    document_chembl_ids: list | str | None = None,
+    standard_relation: list[str] | None = None,
+    standard_type: list[str] | None = None,
+    standard_units: list[str] | None = None,
+    confidence_scores: list | tuple = (9, 8),
+    assay_types: list | tuple = ("B", "F"),
+    chembl_release: int | None = None,
+    additional_fields: list[str] | None = None,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
 ) -> pd.DataFrame:
     """Retrieve ChEMBL bioactivity data from any combination of molecule, target, assay, or document IDs.
     Data is retrieved using the ChEMBL downloader. Merges are performed on the SQL query level and a
@@ -1029,9 +1029,9 @@ def get_full_activity_data_sql(
 
 
 def get_target_names_sql(
-    target_chembl_ids: List[str],
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    target_chembl_ids: list[str],
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
 ) -> dict:
     """Get target names for a list of ChEMBL target IDs using SQL backend.
 
@@ -1068,13 +1068,13 @@ def get_target_names_sql(
         logger.warning(f"No targets found for IDs: {target_chembl_ids}")
         return {}
 
-    return dict(zip(result["chembl_id"], result["pref_name"]))
+    return dict(zip(result["chembl_id"], result["pref_name"], strict=True))
 
 
 def get_assay_size_sql(
-    assay_chembl_ids: Union[list, str],
-    prefix: Optional[Sequence[str]] = None,
-    version: Optional[Union[int, str]] = None,
+    assay_chembl_ids: list | str,
+    prefix: Sequence[str] | None = None,
+    version: int | str | None = None,
 ) -> pd.DataFrame:
     """Get the number of distinct molecules for a list of ChEMBL assay IDs.
 

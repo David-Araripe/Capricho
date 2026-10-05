@@ -63,7 +63,9 @@ def test_post_aggregation_message_explains_mutation_split_and_shows_both_rows():
     stream = io.StringIO()
     sink = logger.add(stream, format="{level}: {message}", level="INFO")
     try:
-        _warn_info_post_aggregation_repeats(data, extra_id_cols=[], aggregate_mutants=False)
+        _warn_info_post_aggregation_repeats(
+            data, extra_id_cols=[], aggregate_mutants=False, compound_equality="connectivity"
+        )
     finally:
         logger.remove(sink)
 
@@ -106,6 +108,7 @@ def test_post_aggregation_message_describes_admet_id_columns():
             extra_id_cols=["standard_units", "assay_cell_type"],
             aggregate_mutants=True,
             value_col="standard_value",
+            compound_equality="connectivity",
         )
     finally:
         logger.remove(sink)
@@ -147,7 +150,7 @@ def test_clean_data_recalculates_groups_after_removing_a_row():
     data = assign_shared_identifier_groups(data)
     assert data["shared_identifier_group"].notna().sum() == 2
 
-    cleaned = clean_data(data, drop_flags=["remove"])
+    cleaned = clean_data(data, drop_flags=["remove"], compound_col="connectivity")
 
     assert len(cleaned) == 2
     assert cleaned["shared_identifier_group"].isna().all()

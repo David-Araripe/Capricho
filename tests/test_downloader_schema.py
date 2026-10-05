@@ -241,7 +241,16 @@ class TestWebresourceActivityCommentRequested(unittest.TestCase):
     def test_only_selection_includes_activity_comment(self):
         from unittest import mock
 
-        import Capricho.chembl.api.webresource as webresource
+        # The upstream module fetches the API schema on import, before our
+        # query mock can take effect. Replace it before importing webresource.
+        import sys
+        from types import ModuleType
+
+        client = mock.Mock()
+        client_module = ModuleType("chembl_webresource_client.new_client")
+        client_module.new_client = client
+        with mock.patch.dict(sys.modules, {client_module.__name__: client_module}):
+            import Capricho.chembl.api.webresource as webresource
 
         query = mock.Mock()
         query.only.return_value = [
@@ -253,7 +262,7 @@ class TestWebresourceActivityCommentRequested(unittest.TestCase):
             }
         ]
 
-        with mock.patch.object(webresource, "new_client") as client:
+        with mock.patch.object(webresource, "new_client", client):
             client.activity.filter.return_value = query
             df, _ = webresource.get_activity_table(target_chembl_ids=["CHEMBL205"])
 

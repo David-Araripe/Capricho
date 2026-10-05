@@ -201,12 +201,12 @@ Control how data is processed and aggregated:
 | `-calc`, `--calculate-pchembl` | Calculate pChEMBL values if not reported. **Required when using censored data** (`--standard-relation` includes `<` or `>`). See [Standard Relations](concepts.md). | `False` |
 | `-vcol`, `--value-column` | Column holding the experimental measurement to summarize (mean/median/std). Use `standard_value` for non-pChEMBL data (e.g., ADMET assays with % inhibition). See [Non-pChEMBL Aggregation](non-pchembl-aggregation). | `pchembl_value` |
 | `-conu`, `--convert-units` | Convert units to standard formats before aggregation. See [Unit Conversion](unit-conversion). | `False` |
-| `-chiral`, `--chirality` | Consider chirality during fingerprint calculation | `False` |
+| `-chiral/-no-chiral`, `--chirality/--no-chirality` | Preserve stereochemistry during standardization and use chiral Morgan fingerprints for `mixed_fp`. Enabled by default; `--no-chirality` removes stereo before matching with any equality method. `connectivity` always merges stereoisomers. | `True` |
 | `-duchi`, `--drop-unassigned-chiral` | Drop entries with unassigned chiral centers | `False` |
 | `-cure`, `--curate-annotation-errors` | Apply curation for pChEMBL annotation errors | `False` |
 | `-mutagg`, `--aggregate-mutants` | Aggregate data on targets regardless of mutation | `False` |
 | `-smr`, `--strict-mutant-removal` | Flag assays with mutant-related keywords for removal | `False` |
-| `-cpd-eq`, `--compound-equality` | Method for compound equality determination | `connectivity` |
+| `-cpd-eq`, `--compound-equality` | Method for compound equality determination | `inchikey` |
 | `-mcols`, `--metadata-columns` | Extra metadata columns to keep, comma-separated | `[]` |
 | `-idcols`, `--id-columns` | Additional columns to append to the aggregation key (compound + task), comma-separated. E.g. `assay_chembl_id` keeps measurements from different assays separate. | `[]` |
 
@@ -217,17 +217,17 @@ compound identifier and `target_chembl_id` receive the same label when they were
 separate by mutation, `--id-columns`, or another preserved readout field; all other rows
 contain `NaN`. The column is diagnostic metadata, not a source-data quality flag.
 `data.shared_identifier_group.value_counts()` reports each group's size. With the default
-compound-equality method the identifier is `connectivity`; the message and grouping use `inchi`,
-`inchikey`, or `smiles` when one of those methods is selected.
+compound-equality method the identifier is `inchikey`; the message and grouping use `connectivity`,
+`inchi`, or `smiles` when one of those methods is selected.
 
 #### Aggregation Column Options
 - **pchembl_value**: (Default) Aggregate on pChEMBL values (-log10 molar potency). Uses geometric mean.
 - **standard_value**: Aggregate on raw standard_value column. Uses arithmetic mean. Useful for ADMET data with non-molar units (%, permeability, etc.).
 
 #### Compound Equality Methods
-- **connectivity**: (Default) Uses the first InChIKey block, ignoring stereochemistry
+- **connectivity**: Uses the first InChIKey block, ignoring stereochemistry
 - **inchi**: Uses the complete standard InChI, including specified stereochemistry
-- **inchikey**: Uses the complete 27-character InChIKey
+- **inchikey**: (Default) Uses the complete 27-character InChIKey
 - **mixed_fp**: Uses ECFP4 and RDKit fingerprints (each with 2048 bits) for identity determination
 - **smiles**: Uses standardized SMILES strings directly for exact string matching
 
@@ -341,14 +341,15 @@ These options control the optional multitask activity matrix output:
 | Option | Description | Default |
 |---|---|---|
 | `--task-col` | Column to use as task identifier | `target_chembl_id` |
-| `--compound-col` | Compound identifier column (`connectivity`, `inchi`, `inchikey`, or `smiles`) | `connectivity` |
+| `--compound-col` | Compound identifier column (`connectivity`, `inchi`, `inchikey`, or `smiles`) | `inchikey` |
 | `--smiles-col` | Column containing SMILES strings | `smiles` |
 | `-vcol`, `--value-column` | Column holding the experimental measurement, as passed to `capricho get --value-column`. Statistics are read from `{value_column}_mean`. | `pchembl_value` |
 | `--id-columns` | Additional columns to combine with `task_col` for composite task identifiers. Use the same columns passed to `capricho get --id-columns` during aggregation. | `None` |
 
 Use the compound identifier selected during aggregation when creating the matrix. For example,
 a dataset retrieved with `--compound-equality inchikey` should normally be prepared with
-`--compound-col inchikey`.
+`--compound-col inchikey` (the default). For connectivity-only legacy files, explicitly
+use `--compound-col connectivity`; there is no silent fallback.
 
 ### Output Options
 
@@ -465,7 +466,7 @@ capricho binarize [OPTIONS]
 |---|---|---|
 | `-t`, `--threshold` | Activity threshold for binarization (pChEMBL scale) | `6.0` (1 µM) |
 | `-vcol`, `--value-column` | Column to use for binarization | `pchembl_value_mean` |
-| `-cid`, `--compound-id-col` | Column name for compound identifiers | `connectivity` |
+| `-cid`, `--compound-id-col` | Column name for compound identifiers | `inchikey` |
 | `-tid`, `--target-id-col` | Column name for target identifiers | `target_chembl_id` |
 | `-rel`, `--relation-col` | Column name for standard_relation values | `standard_relation` |
 | `-bcol`, `--binary-col` | Name for the output binary column | `activity_binary` |
@@ -529,13 +530,13 @@ Use `-rp` / `--conflict-report-path` to save a JSON report with:
 
 #### Compound Identifiers for Conflict Detection
 
-By default, conflicts are detected using the `connectivity` column, which groups compounds by
-their molecular graph while ignoring stereochemistry. You can instead select any compound
+By default, conflicts are detected using the full `inchikey` column, so specified
+stereoisomers are not treated as one compound. You can instead select any compound
 identifier present in the aggregated output:
 
-- **`connectivity`** (default): First InChIKey block; ignores stereochemistry
+- **`connectivity`**: First InChIKey block; ignores stereochemistry
 - **`inchi`**: Complete standard InChI
-- **`inchikey`**: Complete 27-character InChIKey
+- **`inchikey`** (default): Complete 27-character InChIKey
 - **`smiles`**: Standardized SMILES
 
 For example, use full InChIKey identity with:
@@ -545,7 +546,8 @@ capricho binarize -i data.csv -o output.csv -cid inchikey
 ```
 
 Use the same identity level chosen for aggregation unless you deliberately want to inspect
-conflicts at a broader or narrower level.
+conflicts at a broader or narrower level. For connectivity-only legacy files, pass
+`--compound-id-col connectivity` explicitly; there is no silent fallback.
 
 ### Examples
 

@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -196,7 +195,7 @@ def _resolve_conflicts(
     output_binary_col: str,
     groupby_cols: list[str],
     value_column: str = "pchembl_value_mean",
-    threshold: Optional[float] = None,
+    threshold: float | None = None,
 ) -> tuple[list, list[dict]]:
     """Apply a conflict resolution strategy to conflicting compound-target groups.
 
@@ -341,10 +340,10 @@ def _resolve_majority_group(
     group_key,
     group_df,
     output_binary_col,
-    counts_col: Optional[str] = None,
-    raw_value_col: Optional[str] = None,
+    counts_col: str | None = None,
+    raw_value_col: str | None = None,
     relation_col: str = "standard_relation",
-    threshold: Optional[float] = None,
+    threshold: float | None = None,
 ) -> tuple[list, dict]:
     """Keep rows matching the majority binary label, weighted by measurement count.
 
@@ -615,7 +614,7 @@ def _log_and_flag_conflicts(
     relation_col: str,
     value_column: str,
     output_binary_col: str,
-    conflict_resolution: Optional[str] = None,
+    conflict_resolution: str | None = None,
 ) -> pd.DataFrame:
     """Log conflict details and flag conflicting rows in the DataFrame.
 
@@ -684,8 +683,8 @@ def save_conflict_report(
     active_count: int = 0,
     inactive_count: int = 0,
     mcc: float = 0.0,
-    resolution_details: Optional[list[dict]] = None,
-    conflict_resolution: Optional[str] = None,
+    resolution_details: list[dict] | None = None,
+    conflict_resolution: str | None = None,
 ) -> None:
     """Save conflict report to JSON file.
 
@@ -976,13 +975,13 @@ def binarize_aggregated_data(
     df: pd.DataFrame,
     threshold: float = 6.0,
     value_column: str = "pchembl_value_mean",
-    compound_id_col: str = "connectivity",
+    compound_id_col: str = "inchikey",
     target_id_col: str = "target_chembl_id",
     relation_col: str = "standard_relation",
     output_binary_col: str = "activity_binary",
     compare_across_mutants: bool = False,
-    conflict_report_path: Optional[str | Path] = None,
-    conflict_resolution: Optional[str] = None,
+    conflict_report_path: str | Path | None = None,
+    conflict_resolution: str | None = None,
 ) -> pd.DataFrame:
     """Binarize aggregated bioactivity data based on activity threshold and standard_relation.
 
@@ -1001,7 +1000,8 @@ def binarize_aggregated_data(
         df: Aggregated DataFrame from aggregate_data() with pchembl statistics
         threshold: Activity threshold for binarization (default 6.0 = 1 µM)
         value_column: Which aggregated column to use (default: "pchembl_value_mean")
-        compound_id_col: Column identifying compounds (default: "connectivity")
+        compound_id_col: Column identifying compounds (default: "inchikey").
+            Select "connectivity" explicitly for connectivity-only data.
         target_id_col: Column identifying targets (default: "target_chembl_id")
         relation_col: Column with standard_relation values (default: "standard_relation")
         output_binary_col: Name for output binary column (default: "activity_binary")
@@ -1028,7 +1028,13 @@ def binarize_aggregated_data(
     required_cols = [compound_id_col, target_id_col, value_column]
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
-        raise ValueError(f"Missing required columns: {missing_cols}")
+        message = f"Missing required columns: {missing_cols}"
+        if compound_id_col in missing_cols:
+            message += (
+                ". Use compound_id_col='connectivity' (CLI: --compound-id-col connectivity) "
+                "for connectivity-only data, or select the identifier used during aggregation."
+            )
+        raise ValueError(message)
 
     df = df.copy()
 

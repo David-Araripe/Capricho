@@ -1,6 +1,6 @@
 from inspect import signature
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Literal
 
 import pandas as pd
 from chemFilters.chem.standardizers import ChemStandardizer
@@ -18,6 +18,7 @@ from ..chembl.data_flag_functions import (
     flag_missing_canonical_smiles,
     flag_missing_document_date,
     flag_salt_or_solvent_removal,
+    flag_stereochemistry_removal,
     flag_strict_mutant_assays,
     flag_to_remove_mixture_compounds,
     flag_undefined_stereochemistry,
@@ -51,7 +52,6 @@ CompoundEqualityMethod = Literal["mixed_fp", "connectivity", "inchi", "inchikey"
 InChIIdentifier = Literal["connectivity", "inchi", "inchikey"]
 FULL_INCHI_IDENTIFIERS = {"inchi", "inchikey"}
 INCHI_IDENTIFIERS = {"connectivity", *FULL_INCHI_IDENTIFIERS}
-STEREO_SENSITIVE_EQUALITY_METHODS = {"smiles", *FULL_INCHI_IDENTIFIERS}
 
 # when aggregated, some `activity_id` values will be strings and sorting won't work properly
 AGGREGATE_SAVE_SORTED_BY = ["target_chembl_id", "assay_chembl_id"]
@@ -62,6 +62,43 @@ def _compound_identifier_column(compound_equality: CompoundEqualityMethod) -> st
     # Fingerprints are not persisted in tabular output, so mixed_fp continues to use
     # connectivity as its inspectable downstream identifier.
     return "connectivity" if compound_equality == "mixed_fp" else compound_equality
+
+
+def _apply_stereochemistry_policy(
+    df: pd.DataFrame, chirality: bool, compound_equality: CompoundEqualityMethod
+) -> pd.DataFrame:
+    """Apply the requested stereo policy before computing any aggregation keys.
+
+    Work on a copy so a stereo-preserving measurement table can be reused for
+    stereo-aware and stereo-collapsed sensitivity analyses.
+    """
+    result = df.copy()
+    if chirality and compound_equality != "connectivity":
+        return result
+
+    if chirality:
+        logger.warning(
+            "Connectivity-based compound equality merges stereoisomers regardless of chirality. "
+            "Stripping stereochemistry from aggregation SMILES to avoid retaining an arbitrary enantiomer."
+        )
+    else:
+        logger.info("Stereochemistry is disabled: removing stereo before compound matching.")
+
+    result = flag_stereochemistry_removal(result)
+
+    def strip_stereo(smiles):
+        if pd.isna(smiles):
+            return smiles
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return smiles
+        Chem.RemoveStereochemistry(mol)
+        return Chem.MolToSmiles(mol)
+
+    unique_smiles = result["standard_smiles"].drop_duplicates()
+    stripped_by_smiles = dict(zip(unique_smiles, unique_smiles.apply(strip_stereo), strict=True))
+    result["standard_smiles"] = result["standard_smiles"].map(stripped_by_smiles)
+    return result
 
 
 def _convert_smiles_to_identifier(
@@ -99,7 +136,7 @@ def _identifier_map(smiles: pd.Series, identifier: InChIIdentifier) -> dict:
     """Calculate an identifier once per distinct SMILES string."""
     unique_smiles = smiles.drop_duplicates().tolist()
     identifiers = _convert_smiles_to_identifier(unique_smiles, identifier)
-    return dict(zip(unique_smiles, identifiers))
+    return dict(zip(unique_smiles, identifiers, strict=True))
 
 
 def _connectivity_from_identifier(identifier, identifier_type: InChIIdentifier):
@@ -116,7 +153,7 @@ def _connectivity_from_identifier(identifier, identifier_type: InChIIdentifier):
 def _assign_output_compound_identifiers(
     df: pd.DataFrame,
     compound_equality: CompoundEqualityMethod,
-    identifier_by_smiles: Optional[dict] = None,
+    identifier_by_smiles: dict | None = None,
 ) -> pd.DataFrame:
     """Add inspectable compound identifiers without recalculating cached values."""
     result = df.copy()
@@ -142,7 +179,7 @@ def _finalize_aggregated_output(
     df: pd.DataFrame,
     compound_equality: CompoundEqualityMethod,
     extra_id_cols: list[str],
-    identifier_by_smiles: Optional[dict] = None,
+    identifier_by_smiles: dict | None = None,
 ) -> pd.DataFrame:
     """Add identifiers, order output columns, and assign shared-identifier groups."""
     comment_columns = [DATA_PROCESSING_COMMENT, DATA_DROPPING_COMMENT]
@@ -253,7 +290,7 @@ def _warn_info_post_aggregation_repeats(
     extra_id_cols: list[str],
     aggregate_mutants: bool = False,
     value_col: str = "pchembl_value",
-    compound_equality: CompoundEqualityMethod = "connectivity",
+    compound_equality: CompoundEqualityMethod = "inchikey",
     _limit: int = 30,
     _sample_rows: int = 5,
 ) -> None:
@@ -424,27 +461,27 @@ def _warn_info_post_aggregation_repeats(
 
 
 def get_standardize_and_clean_workflow(
-    molecule_ids: Optional[list[str]] = None,
-    target_ids: Optional[list[str]] = None,
-    assay_ids: Optional[list[str]] = None,
-    document_ids: Optional[list[str]] = None,
+    molecule_ids: list[str] | None = None,
+    target_ids: list[str] | None = None,
+    assay_ids: list[str] | None = None,
+    document_ids: list[str] | None = None,
     chirality: bool = True,
     calculate_pchembl: bool = False,
-    output_path: Optional[Union[str, Path]] = None,
-    confidence_scores: list[str] = [7, 8, 9],
-    bioactivity_type: Optional[list[str]] = None,
-    standard_relation: list[str] = ["="],
-    standard_units: Optional[list[str]] = None,
-    assay_types: list[str] = ["B", "F"],
-    chembl_release: Optional[int] = None,
+    output_path: str | Path | None = None,
+    confidence_scores: list[int] | tuple[int, ...] | None = (7, 8, 9),
+    bioactivity_type: list[str] | None = None,
+    standard_relation: list[str] | tuple[str, ...] | None = ("=",),
+    standard_units: list[str] | None = None,
+    assay_types: list[str] | tuple[str, ...] | None = ("B", "F"),
+    chembl_release: int | None = None,
     save_not_aggregated: bool = True,
     drop_unassigned_chiral: bool = False,
-    version: Optional[Union[int, str]] = None,
+    version: int | str | None = None,
     backend: Literal["downloader", "webresource"] = "downloader",
     curate_annotation_errors: bool = True,
     require_doc_date: bool = False,
-    min_assay_size: Optional[int] = None,
-    max_assay_size: Optional[int] = None,
+    min_assay_size: int | None = None,
+    max_assay_size: int | None = None,
     min_assay_overlap: int = 0,
     strict_mutant_removal: bool = False,
     value_col: str = "pchembl_value",
@@ -491,6 +528,13 @@ def get_standardize_and_clean_workflow(
     Returns:
         pd.DataFrame: the filtered, standardized, and cleaned data
     """
+    # Immutable defaults keep explicit None meaning "no filter".
+    if assay_types is not None:
+        assay_types = list(assay_types)
+    if standard_relation is not None:
+        standard_relation = list(standard_relation)
+    if confidence_scores is not None:
+        confidence_scores = list(confidence_scores)
     if output_path is not None:
         if isinstance(output_path, str):
             output_path = Path(output_path)
@@ -655,7 +699,7 @@ def get_standardize_and_clean_workflow(
     # A compound can have many activity rows. Standardization is deterministic, so run
     # the expensive ChEMBL pipeline once per distinct source structure and map it back.
     unique_canonical_smiles = df["canonical_smiles"].drop_duplicates().tolist()
-    standardized_by_smiles = dict(zip(unique_canonical_smiles, stdzer(unique_canonical_smiles)))
+    standardized_by_smiles = dict(zip(unique_canonical_smiles, stdzer(unique_canonical_smiles), strict=True))
 
     df = (
         df
@@ -671,6 +715,9 @@ def get_standardize_and_clean_workflow(
         .reset_index(drop=True)
         .copy()
     )
+
+    if not chirality:
+        df = flag_stereochemistry_removal(df, smiles_column="canonical_smiles")
 
     # make sure we don't have Nan, can result from merging pChEMBL-lacking calculated values
     df[DATA_PROCESSING_COMMENT] = df[DATA_PROCESSING_COMMENT].fillna("")
@@ -711,7 +758,7 @@ def get_standardize_and_clean_workflow(
             chunk_size=200,
         )
         undefined_stereo_counts = [len(value) for value in applier()]
-        undefined_stereo_by_smiles = dict(zip(unique_smiles, undefined_stereo_counts))
+        undefined_stereo_by_smiles = dict(zip(unique_smiles, undefined_stereo_counts, strict=True))
 
         df = df.assign(
             undefined_stereocenters=lambda x: x["standard_smiles"].map(undefined_stereo_by_smiles)
@@ -773,12 +820,12 @@ def get_standardize_and_clean_workflow(
 def aggregate_data(
     df,
     chirality: bool,
-    metadata_cols: list[str] = [],
-    extra_id_cols: list[str] = [],
-    extra_multival_cols: list[str] = [],
+    metadata_cols: list[str] | None = None,
+    extra_id_cols: list[str] | None = None,
+    extra_multival_cols: list[str] | None = None,
     aggregate_mutants: bool = False,
-    output_path: Optional[Union[str, Path]] = None,
-    compound_equality: CompoundEqualityMethod = "connectivity",
+    output_path: str | Path | None = None,
+    compound_equality: CompoundEqualityMethod = "inchikey",
     value_col: str = "pchembl_value",
 ):
     """Aggregate the data obtained from ChEMBL by:
@@ -792,7 +839,9 @@ def aggregate_data(
     Args:
 
         df: dataframe output from `CompoundMapper.cli.workflow.fetch_standardize_and_clean_workflow`
-        chirality: toggle chiral-sensitive fingerprints for identifying same molecules
+        chirality: Preserve specified stereo in compound matching and output structures.
+            False removes stereo before computing keys for every equality method.
+            Connectivity always ignores stereo, regardless of this argument.
         extra_id_cols: additional columns to use as identifiers for the aggregation. Passing
             `["assay_chembl_id"]` to this argument, for example, will only aggregate the data
             if the compound is the same and the assay is the same.
@@ -802,9 +851,9 @@ def aggregate_data(
         aggregate_mutants: if true, will aggregate data solely based on the target_chembl_id,
             regardless of the mutation flag in ChEMBL. Defaults to False.
         output_path: path to save the aggregated data
-        compound_equality: How to identify compounds in the dataset. ``connectivity`` uses
-            the first InChIKey block; ``inchi`` and ``inchikey`` use the complete standard
-            InChI representation or its hashed key; ``smiles`` uses standardized SMILES;
+        compound_equality: How to identify compounds in the dataset. Defaults to ``inchikey``.
+            ``connectivity`` uses the first InChIKey block; ``inchi`` and ``inchikey`` use
+            the complete standard InChI representation or its hashed key; ``smiles`` uses standardized SMILES;
             and ``mixed_fp`` uses combined ECFP4 and RDKit fingerprints.
         value_col: Column name containing the values to aggregate statistics on.
             Defaults to "pchembl_value". Use "standard_value" for non-pChEMBL data (e.g., % inhibition).
@@ -812,6 +861,13 @@ def aggregate_data(
     Returns:
         pd.DataFrame: the aggregated data
     """
+    if extra_multival_cols is None:
+        extra_multival_cols = []
+    if extra_id_cols is None:
+        extra_id_cols = []
+    if metadata_cols is None:
+        metadata_cols = []
+    df = _apply_stereochemistry_policy(df, chirality, compound_equality)
     current_extra_id_cols = list(extra_id_cols)  # mutable copy
 
     identifier_by_smiles = None
@@ -822,28 +878,9 @@ def aggregate_data(
         unique_fps = calculate_mixed_FPs(
             unique_smiles, n_jobs=8, morgan_kwargs={"useChirality": chirality}, chunk_size=50
         )
-        fp_by_smiles = dict(zip(unique_smiles, unique_fps))
+        fp_by_smiles = dict(zip(unique_smiles, unique_fps, strict=True))
         df = df.assign(id_array=[fp_by_smiles[value] for value in df["standard_smiles"]])
     elif compound_equality in INCHI_IDENTIFIERS:
-        if compound_equality == "connectivity":
-
-            def _strip_stereo(smi):
-                mol = Chem.MolFromSmiles(smi)
-                if mol is None:
-                    return smi
-                Chem.RemoveStereochemistry(mol)
-                return Chem.MolToSmiles(mol)
-
-            if chirality:
-                logger.warning(
-                    "Connectivity-based compound equality merges stereoisomers!!! "
-                    "Stripping stereochemistry from standard_smiles to avoid "
-                    "retaining an arbitrary enantiomer's SMILES in the output."
-                )
-            unique_smiles = df["standard_smiles"].drop_duplicates()
-            stripped_by_smiles = dict(zip(unique_smiles, unique_smiles.apply(_strip_stereo)))
-            df["standard_smiles"] = df["standard_smiles"].map(stripped_by_smiles)
-
         identifier_by_smiles = _identifier_map(df["standard_smiles"], compound_equality)
         df = df.assign(id_array=df["standard_smiles"].map(identifier_by_smiles))
     elif compound_equality == "smiles":
@@ -900,7 +937,7 @@ def aggregate_data(
         DATA_PROCESSING_COMMENT,
     ]
 
-    preserve_stereo = chirality or compound_equality in STEREO_SENSITIVE_EQUALITY_METHODS
+    preserve_stereo = chirality and compound_equality != "connectivity"
     final_data = process_repeat_mols(
         df,
         repeats_idxs,
@@ -936,11 +973,11 @@ def aggregate_data(
 def re_aggregate_data(
     df: pd.DataFrame,
     chirality: bool,
-    extra_id_cols: list[str] = [],
-    extra_multival_cols: list[str] = [],
+    extra_id_cols: list[str] | None = None,
+    extra_multival_cols: list[str] | None = None,
     aggregate_mutants: bool = False,
-    output_path: Optional[Union[str, Path]] = None,
-    compound_equality: CompoundEqualityMethod = "connectivity",
+    output_path: str | Path | None = None,
+    compound_equality: CompoundEqualityMethod = "inchikey",
 ) -> pd.DataFrame:
     """Re-aggregate the data obtained from the `aggregate_data` method after dataset
     explosion. Useful for exploring the effect of different `extra_id_cols` and other
@@ -948,7 +985,9 @@ def re_aggregate_data(
 
     Args:
         df: dataframe output from `aggregate_data`
-        chirality: toggle chiral-sensitive fingerprints for identifying same molecules
+        chirality: Preserve specified stereo in compound matching and output structures.
+            False removes stereo before computing keys for every equality method.
+            Connectivity always ignores stereo, regardless of this argument.
         extra_id_cols: additional columns to use as identifiers for the aggregation. Passing
             `["assay_chembl_id"]` to this argument, for example, will only aggregate the data
             if the compound is the same and the assay is the same.
@@ -958,14 +997,18 @@ def re_aggregate_data(
         aggregate_mutants: if true, will aggregate data solely based on the target_chembl_id,
             regardless of the mutation flag in ChEMBL. Defaults to False.
         output_path: path to save the aggregated data
-        compound_equality: How to identify compounds in the dataset. ``connectivity`` uses
-            the first InChIKey block; ``inchi`` and ``inchikey`` use the complete standard
-            InChI representation or its hashed key; ``smiles`` uses standardized SMILES;
+        compound_equality: How to identify compounds in the dataset. Defaults to ``inchikey``.
+            ``connectivity`` uses the first InChIKey block; ``inchi`` and ``inchikey`` use
+            the complete standard InChI representation or its hashed key; ``smiles`` uses standardized SMILES;
             and ``mixed_fp`` uses combined ECFP4 and RDKit fingerprints.
 
     Returns:
         pd.DataFrame: the re-aggregated data
     """
+    if extra_multival_cols is None:
+        extra_multival_cols = []
+    if extra_id_cols is None:
+        extra_id_cols = []
     if "processed_smiles" in df.columns:
         df = df.rename(columns={"processed_smiles": "standard_smiles"})
     if "standard_smiles" not in df.columns:
@@ -975,15 +1018,21 @@ def re_aggregate_data(
             "This method expects the output from CompoundMapper's CLI, which includes a 'smiles' column."
         )
 
+    df = _apply_stereochemistry_policy(df, chirality, compound_equality)
     identifier_by_smiles = None
     if compound_equality == "mixed_fp":
         unique_smiles = df["standard_smiles"].drop_duplicates().tolist()
         unique_fps = calculate_mixed_FPs(unique_smiles, n_jobs=8, morgan_kwargs={"useChirality": chirality})
-        fp_by_smiles = dict(zip(unique_smiles, unique_fps))
+        fp_by_smiles = dict(zip(unique_smiles, unique_fps, strict=True))
         id_array = pd.Series([fp_by_smiles[value] for value in df["standard_smiles"]], index=df.index)
     elif compound_equality in INCHI_IDENTIFIERS:
-        if compound_equality in df.columns and df[compound_equality].notna().all():
-            identifier_by_smiles = dict(zip(df["standard_smiles"], df[compound_equality]))
+        if (
+            chirality
+            and compound_equality != "connectivity"
+            and compound_equality in df.columns
+            and df[compound_equality].notna().all()
+        ):
+            identifier_by_smiles = dict(zip(df["standard_smiles"], df[compound_equality], strict=True))
         else:
             identifier_by_smiles = _identifier_map(df["standard_smiles"], compound_equality)
         id_array = df["standard_smiles"].map(identifier_by_smiles)
@@ -1041,7 +1090,7 @@ def re_aggregate_data(
                 "Please ensure that the DataFrame contains all necessary columns."
             )
 
-    preserve_stereo = chirality or compound_equality in STEREO_SENSITIVE_EQUALITY_METHODS
+    preserve_stereo = chirality and compound_equality != "connectivity"
     final_data = process_repeat_mols(  # recalculate the stats given new conditions
         df,
         repeats_idxs,

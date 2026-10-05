@@ -134,6 +134,22 @@ class TestQueryPreparation(unittest.TestCase):
                 achiral = _describe_queries(inputs, True, False, 1)
                 self.assertEqual(achiral["query_inchikey"].nunique(), 1)
 
+    def test_truncated_standardizer_results_are_rejected(self):
+        standardizer = Mock(return_value=["CCO"])
+        with (
+            patch("Capricho.chembl.similarity.ChemStandardizer", return_value=standardizer),
+            self.assertRaisesRegex(ValueError, "zip"),
+        ):
+            _describe_queries(["CCO", "CCN"], True, True, 1)
+
+    def test_truncated_inchikey_results_are_rejected(self):
+        writer = Mock(return_value=["LFQSCWFLJHTTHZ-UHFFFAOYSA-N"])
+        with (
+            patch("Capricho.chembl.similarity.InchiHandling", return_value=writer),
+            self.assertRaisesRegex(ValueError, "zip"),
+        ):
+            _describe_queries(["CCO", "CCN"], False, True, 1)
+
 
 class TestLookupValidation(unittest.TestCase):
     """Input validation happens before any database access, so bad input fails fast."""
@@ -572,7 +588,7 @@ class TestFingerprintIndexContract(unittest.TestCase):
                                 in_memory=in_memory,
                                 version=37,
                             )
-                            actual = dict(zip(hits["molregno"], hits["similarity"]))
+                            actual = dict(zip(hits["molregno"], hits["similarity"], strict=True))
                             if top_k is None:
                                 self.assertEqual(set(actual), set(expected))
                             else:
